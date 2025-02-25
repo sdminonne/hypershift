@@ -30,3 +30,7 @@ func (f *fakeImageProvider) GetImage(key string) string {
 func (f *fakeImageProvider) ImageExist(key string) (string, bool) {
 	return key, true
 }
+
+func (f *fakeImageProvider) ComponentImages() map[string]string {
+	return map[string]string{} // unused so far
+}
