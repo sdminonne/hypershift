@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,9 @@ import (
 	. "github.com/onsi/gomega"
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/support/releaseinfo"
+	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
 	"github.com/openshift/hypershift/support/util"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -288,15 +291,29 @@ func initSecretOrDie(namespace, name, key string, data []byte) *corev1.Secret {
 	}
 }
 
-func initconfigMapOrDie(namespace, name, key, data string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
+func initconfigMapOrDie(namespace, name string, keyData []struct {
+	key  string
+	data string
+}) *corev1.ConfigMap {
+	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Data: map[string]string{
-			key: data},
+		Data: make(map[string]string, len(keyData)),
 	}
+	for i := range keyData {
+		cm.Data[keyData[i].key] = keyData[i].data // TODO use iter
+	}
+	return cm
+}
+
+func jsonMarshalOrDie(t any) string {
+	v, err := json.Marshal(t)
+	if err != nil {
+		panic("unable to marshal")
+	}
+	return string(v)
 }
 
 func TestLocalIgnitionProvider_GetPayload(t *testing.T) {
@@ -330,8 +347,9 @@ func TestLocalIgnitionProvider_GetPayload(t *testing.T) {
 	}{
 		{name: "WIP:",
 			fields: fields{
-				Namespace: "the-namespace",
-				lock:      sync.Mutex{},
+				Namespace:       "the-namespace",
+				ReleaseProvider: &fakereleaseprovider.FakeReleaseProvider{},
+				lock:            sync.Mutex{},
 			},
 			args: args{
 				ctx: context.TODO(),
@@ -339,8 +357,11 @@ func TestLocalIgnitionProvider_GetPayload(t *testing.T) {
 			want: nil,
 			objects: []client.Object{
 				initSecretOrDie("the-namespace", pullSecretName, corev1.DockerConfigJsonKey, []byte("data")),
-				initconfigMapOrDie("the-namespace", additionalTrustBundleName, "ca-bundle.crt", "data"),
+				initconfigMapOrDie("the-namespace", additionalTrustBundleName, []struct{ key, data string }{{"ca-bundle.crt", "data"}}),
 				initSecretOrDie("the-namespace", "bootstrap-kubeconfig", "kubeconfig", []byte("data")),
+				initconfigMapOrDie("the-namespace", "machine-config-server", []struct{ key, data string }{
+					{"configuration-hash", "data"},
+					{"user-ca-bundle-config.yaml", jsonMarshalOrDie(initconfigMapOrDie("", "", []struct{ key, data string }{}))}}),
 			},
 			wantError: true,
 		},
