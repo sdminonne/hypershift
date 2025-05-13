@@ -10,9 +10,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
+	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/imageprovider"
 	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/manifests"
 	"github.com/openshift/hypershift/support/certs"
-	"github.com/openshift/hypershift/support/testutil"
 	"github.com/openshift/hypershift/support/thirdparty/library-go/pkg/image/dockerv1client"
 	"github.com/openshift/hypershift/support/upsert"
 	"github.com/openshift/hypershift/support/util/fakeimagemetadataprovider"
@@ -25,6 +25,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"go.uber.org/mock/gomock"
 )
 
 const (
@@ -75,6 +77,21 @@ func TestReconcile(t *testing.T) {
 	_ = hyperv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
+	mockCtrl := gomock.NewController(t)
+	mockedReleaseImageProvider := imageprovider.NewMockReleaseImageProvider(mockCtrl)
+	mockedReleaseImageProvider.EXPECT().Version().AnyTimes().Return("4.18.0")
+	mockedReleaseImageProvider.EXPECT().ImageExist(gomock.Any()).AnyTimes().DoAndReturn(func(key string) (string, bool) {
+		return string(key), true
+	})
+	mockedReleaseImageProvider.EXPECT().GetImage(gomock.Any()).AnyTimes().DoAndReturn(func(key string) string {
+		return string(key)
+	})
+	mockedReleaseImageProvider.EXPECT().ComponentVersions().AnyTimes().DoAndReturn(func() (map[string]string, error) {
+		return map[string]string{
+			"kubernetes": "1.30.1",
+		}, nil
+	})
+	mockedUserReleaseImageProvider := imageprovider.NewMockReleaseImageProvider(mockCtrl)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
@@ -85,8 +102,8 @@ func TestReconcile(t *testing.T) {
 			cpContext := ControlPlaneContext{
 				Context:                  context.Background(),
 				ApplyProvider:            upsert.NewApplyProvider(false),
-				ReleaseImageProvider:     testutil.FakeImageProvider(),
-				UserReleaseImageProvider: testutil.FakeImageProvider(),
+				ReleaseImageProvider:     mockedReleaseImageProvider,
+				UserReleaseImageProvider: mockedUserReleaseImageProvider,
 				ImageMetadataProvider: &fakeimagemetadataprovider.FakeRegistryClientImageMetadataProvider{
 					Result:   &dockerv1client.DockerImageConfig{},
 					Manifest: fakeimagemetadataprovider.FakeManifest{},
@@ -260,7 +277,7 @@ func componentsFakeObjects() ([]client.Object, error) {
 			Namespace: testComponentNamespace,
 		},
 		Status: hyperv1.ControlPlaneComponentStatus{
-			Version: testutil.FakeImageProvider().Version(),
+			Version: "4.18.0",
 			Conditions: []metav1.Condition{
 				{
 					Type:   string(hyperv1.ControlPlaneComponentAvailable),

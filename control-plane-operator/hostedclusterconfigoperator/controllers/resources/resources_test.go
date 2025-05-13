@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	cpomanifests "github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/manifests"
@@ -16,7 +17,8 @@ import (
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/manifests"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/nodepool"
 	"github.com/openshift/hypershift/support/globalconfig"
-	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
+	"github.com/openshift/hypershift/support/releaseinfo"
+	"github.com/openshift/hypershift/support/releaseinfo/testutils"
 	supportutil "github.com/openshift/hypershift/support/util"
 	"github.com/openshift/hypershift/support/util/fakeimagemetadataprovider"
 
@@ -134,7 +136,9 @@ var cpObjects = []client.Object{
 func TestReconcileErrorHandling(t *testing.T) {
 	// get initial number of creates with no get errors
 	imageMetaDataProvider := fakeimagemetadataprovider.FakeRegistryClientImageMetadataProviderHCCO{}
-
+	mockCtrl := gomock.NewController(t)
+	mockedReleaseProvider := releaseinfo.NewMockProvider(mockCtrl)
+	mockedReleaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).Return(testutils.InitReleaseImageOrDie("99.99.99"), nil).AnyTimes()
 	var totalCreates int
 	{
 		fakeClient := &testClient{
@@ -151,7 +155,7 @@ func TestReconcileErrorHandling(t *testing.T) {
 			cpClient:               fake.NewClientBuilder().WithScheme(api.Scheme).WithObjects(cpObjects...).Build(),
 			hcpName:                "foo",
 			hcpNamespace:           "bar",
-			releaseProvider:        &fakereleaseprovider.FakeReleaseProvider{},
+			releaseProvider:        mockedReleaseProvider,
 			ImageMetaDataProvider:  &imageMetaDataProvider,
 		}
 		_, err := r.Reconcile(context.Background(), controllerruntime.Request{})
@@ -175,7 +179,7 @@ func TestReconcileErrorHandling(t *testing.T) {
 			cpClient:               fake.NewClientBuilder().WithScheme(api.Scheme).WithObjects(cpObjects...).Build(),
 			hcpName:                "foo",
 			hcpNamespace:           "bar",
-			releaseProvider:        &fakereleaseprovider.FakeReleaseProvider{},
+			releaseProvider:        mockedReleaseProvider,
 			ImageMetaDataProvider:  &imageMetaDataProvider,
 		}
 		_, _ = r.Reconcile(context.Background(), controllerruntime.Request{})

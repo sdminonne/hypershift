@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/api/util/ipnet"
@@ -14,7 +15,8 @@ import (
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests/ignitionserver"
 	haproxy "github.com/openshift/hypershift/hypershift-operator/controllers/nodepool/apiserver-haproxy"
 	"github.com/openshift/hypershift/support/api"
-	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
+	"github.com/openshift/hypershift/support/releaseinfo"
+	"github.com/openshift/hypershift/support/releaseinfo/testutils"
 	"github.com/openshift/hypershift/support/thirdparty/library-go/pkg/image/dockerv1client"
 	"github.com/openshift/hypershift/support/util/fakeimagemetadataprovider"
 
@@ -30,6 +32,7 @@ import (
 
 func TestReconcileKarpenterUserDataSecret(t *testing.T) {
 	g := NewWithT(t)
+	mockCtrl := gomock.NewController(t)
 
 	pullSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "pull-secret"},
@@ -110,18 +113,9 @@ func TestReconcileKarpenterUserDataSecret(t *testing.T) {
 			},
 		},
 	}
-	releaseProvider := &fakereleaseprovider.FakeReleaseProvider{
-		ImageVersion: map[string]string{
-			"release-4.18": "4.18.0",
-		},
-		Version: "4.18.0",
-		Components: map[string]string{
-			haproxy.HAProxyRouterImageName: "test-image",
-		},
-	}
 
-	releaseImage, err := releaseProvider.Lookup(context.Background(), "release-4.18", nil)
-	g.Expect(err).ToNot(HaveOccurred())
+	mockedReleaseProvider := releaseinfo.NewMockProvider(mockCtrl)
+	mockedReleaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).Return(testutils.InitReleaseImageOrDie("4.18.0"), nil).Times(1)
 
 	nodePool := &hyperv1.NodePool{
 		ObjectMeta: metav1.ObjectMeta{
@@ -132,7 +126,7 @@ func TestReconcileKarpenterUserDataSecret(t *testing.T) {
 		},
 	}
 
-	err = r.reconcileKarpenterUserDataSecret(context.Background(), hostedCluster, releaseImage, nodePool, releaseProvider, imageMetadataProvider)
+	err := r.reconcileKarpenterUserDataSecret(context.Background(), hostedCluster, testutils.InitReleaseImageOrDie("release-4.18"), nodePool, mockedReleaseProvider, imageMetadataProvider)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	userData, err := getUserDataSecret(context.Background(), fakeClient, nodePool, controlplaneNamespace)

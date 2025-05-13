@@ -12,6 +12,7 @@ import (
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/api/util/ipnet"
 	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/common"
+	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/imageprovider"
 	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/infra"
 	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/manifests"
 	etcdv2 "github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/v2/etcd"
@@ -20,13 +21,13 @@ import (
 	ignitionproxyv2 "github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/v2/ignitionserver_proxy"
 	kasv2 "github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/v2/kas"
 	oapiv2 "github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/v2/oapi"
+	haproxy "github.com/openshift/hypershift/hypershift-operator/controllers/nodepool/apiserver-haproxy"
 	"github.com/openshift/hypershift/support/api"
 	fakecapabilities "github.com/openshift/hypershift/support/capabilities/fake"
 	"github.com/openshift/hypershift/support/certs"
 	"github.com/openshift/hypershift/support/config"
 	controlplanecomponent "github.com/openshift/hypershift/support/controlplane-component"
 	"github.com/openshift/hypershift/support/releaseinfo"
-	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
 	"github.com/openshift/hypershift/support/releaseinfo/testutils"
 	"github.com/openshift/hypershift/support/testutil"
 	"github.com/openshift/hypershift/support/thirdparty/library-go/pkg/image/dockerv1client"
@@ -67,7 +68,88 @@ import (
 	"github.com/go-logr/zapr"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
+
+	imagev1 "github.com/openshift/api/image/v1"
 )
+
+func initReleaseImage(version string) *releaseinfo.ReleaseImage {
+	releaseImage := &releaseinfo.ReleaseImage{
+		ImageStream: &imagev1.ImageStream{
+			ObjectMeta: metav1.ObjectMeta{Name: "4.18.0"},
+			Spec: imagev1.ImageStreamSpec{
+				Tags: []imagev1.TagReference{
+					{
+						Name: "cluster-autoscaler",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "cluster-machine-approver",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "aws-cluster-api-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "cluster-capi-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "azure-cluster-api-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "openstack-cluster-api-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: util.AvailabilityProberImageName,
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: haproxy.HAProxyRouterImageName,
+						From: &corev1.ObjectReference{Name: ""},
+					},
+				},
+			},
+		},
+		StreamMetadata: &releaseinfo.CoreOSStreamMetadata{
+			Architectures: map[string]releaseinfo.CoreOSArchitecture{
+				"x86_64": {
+					Images: releaseinfo.CoreOSImages{
+						AWS: releaseinfo.CoreOSAWSImages{
+							Regions: map[string]releaseinfo.CoreOSAWSImage{
+								"us-east-1": {
+									Release: "us-east-1-x86_64-release",
+									Image:   "us-east-1-x86_64-image",
+								},
+							},
+						},
+					},
+				},
+				"aarch64": {
+					Images: releaseinfo.CoreOSImages{
+						AWS: releaseinfo.CoreOSAWSImages{
+							Regions: map[string]releaseinfo.CoreOSAWSImage{
+								"us-east-1": {
+									Release: "us-east-1-aarch64-release",
+									Image:   "us-east-1-aarch64-image",
+								},
+								"us-west-1": {
+									Release: "us-west-1-aarch64-release",
+									Image:   "",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	releaseImage.ImageStream.Name = version
+	return releaseImage
+}
 
 type fakeEC2Client struct {
 	ec2iface.EC2API
@@ -839,12 +921,14 @@ func TestEventHandling(t *testing.T) {
 	mockedProviderWithOpenshiftImageRegistryOverrides.EXPECT().
 		Lookup(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(testutils.InitReleaseImageOrDie("4.15.0"), nil).AnyTimes()
+	mockedUserReleaseProvider := releaseinfo.NewMockProviderWithOpenShiftImageRegistryOverrides(mockCtrl)
+	mockedUserReleaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(initReleaseImage("4.15.0"), nil)
 
 	r := &HostedControlPlaneReconciler{
 		Client:                        c,
 		ManagementClusterCapabilities: &fakecapabilities.FakeSupportAllCapabilities{},
 		ReleaseProvider:               mockedProviderWithOpenshiftImageRegistryOverrides,
-		UserReleaseProvider:           &fakereleaseprovider.FakeReleaseProvider{},
+		UserReleaseProvider:           mockedUserReleaseProvider, //&fakereleaseprovider.FakeReleaseProvider{},
 		reconcileInfrastructureStatus: func(context.Context, *hyperv1.HostedControlPlane) (infra.InfrastructureStatus, error) {
 			return readyInfraStatus, nil
 		},
@@ -917,6 +1001,7 @@ func TestNonReadyInfraTriggersRequeueAfter(t *testing.T) {
 	mockedProviderWithOpenshiftImageRegistryOverrides.EXPECT().
 		Lookup(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(testutils.InitReleaseImageOrDie("4.15.0"), nil).AnyTimes()
+	mockedUserReleaseProvider := releaseinfo.NewMockProviderWithOpenShiftImageRegistryOverrides(mockCtrl)
 	hcp := sampleHCP(t)
 	pullSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: hcp.Namespace, Name: "pull-secret"}}
 	c := fake.NewClientBuilder().WithScheme(api.Scheme).WithObjects(hcp, pullSecret).WithStatusSubresource(&hyperv1.HostedControlPlane{}).Build()
@@ -924,7 +1009,7 @@ func TestNonReadyInfraTriggersRequeueAfter(t *testing.T) {
 		Client:                        c,
 		ManagementClusterCapabilities: &fakecapabilities.FakeSupportAllCapabilities{},
 		ReleaseProvider:               mockedProviderWithOpenshiftImageRegistryOverrides,
-		UserReleaseProvider:           &fakereleaseprovider.FakeReleaseProvider{},
+		UserReleaseProvider:           mockedUserReleaseProvider, //&fakereleaseprovider.FakeReleaseProvider{},
 		reconcileInfrastructureStatus: func(context.Context, *hyperv1.HostedControlPlane) (infra.InfrastructureStatus, error) {
 			return infra.InfrastructureStatus{}, nil
 		},
@@ -1413,11 +1498,31 @@ func TestControlPlaneComponents(t *testing.T) {
 			ReleaseImage: "quay.io/openshift-release-dev/ocp-release:4.16.10-x86_64",
 		},
 	}
-
+	mockedReleaseImageProvider := imageprovider.NewMockReleaseImageProvider(mockCtrl)
+	mockedReleaseImageProvider.EXPECT().Version().AnyTimes().Return("4.18.0")
+	mockedReleaseImageProvider.EXPECT().ImageExist(gomock.Any()).AnyTimes().DoAndReturn(func(key string) (string, bool) {
+		return string(key), true
+	})
+	mockedReleaseImageProvider.EXPECT().GetImage(gomock.Any()).AnyTimes().DoAndReturn(func(key string) string {
+		return string(key)
+	})
+	mockedReleaseImageProvider.EXPECT().ComponentVersions().AnyTimes().DoAndReturn(func() (map[string]string, error) {
+		return map[string]string{
+			"kubernetes": "1.30.1",
+		}, nil
+	})
+	mockedUserReleaseImageProvider := imageprovider.NewMockReleaseImageProvider(mockCtrl)
+	mockedUserReleaseImageProvider.EXPECT().Version().AnyTimes().Return("4.18.0")
+	mockedUserReleaseImageProvider.EXPECT().ImageExist(gomock.Any()).AnyTimes().DoAndReturn(func(key string) (string, bool) {
+		return string(key), true
+	})
+	mockedUserReleaseImageProvider.EXPECT().GetImage(gomock.Any()).AnyTimes().DoAndReturn(func(key string) string {
+		return string(key)
+	})
 	cpContext := controlplanecomponent.ControlPlaneContext{
 		Context:                  context.Background(),
-		ReleaseImageProvider:     testutil.FakeImageProvider(),
-		UserReleaseImageProvider: testutil.FakeImageProvider(),
+		ReleaseImageProvider:     mockedReleaseImageProvider,
+		UserReleaseImageProvider: mockedUserReleaseImageProvider,
 		ImageMetadataProvider: &fakeimagemetadataprovider.FakeRegistryClientImageMetadataProvider{
 			Result: &dockerv1client.DockerImageConfig{
 				Config: &docker10.DockerConfig{
@@ -1607,7 +1712,7 @@ func componentsFakeDependencies(componentName string, namespace string) []client
 			Namespace: namespace,
 		},
 		Status: hyperv1.ControlPlaneComponentStatus{
-			Version: testutil.FakeImageProvider().Version(),
+			Version: "4.18.0",
 			Conditions: []metav1.Condition{
 				{
 					Type:   string(hyperv1.ControlPlaneComponentAvailable),

@@ -5,10 +5,13 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
+	haproxy "github.com/openshift/hypershift/hypershift-operator/controllers/nodepool/apiserver-haproxy"
 	"github.com/openshift/hypershift/support/api"
-	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
+	"github.com/openshift/hypershift/support/releaseinfo"
+	"github.com/openshift/hypershift/support/util"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -17,6 +20,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	imagev1 "github.com/openshift/api/image/v1"
 )
 
 func TestValidateHostedClusterPayloadSupportsNodePoolCPUArch(t *testing.T) {
@@ -107,6 +112,85 @@ func TestValidateHostedClusterPayloadSupportsNodePoolCPUArch(t *testing.T) {
 	}
 }
 
+func initReleaseImage(version string) *releaseinfo.ReleaseImage {
+	releaseImage := &releaseinfo.ReleaseImage{
+		ImageStream: &imagev1.ImageStream{
+			ObjectMeta: metav1.ObjectMeta{Name: "4.18.0"},
+			Spec: imagev1.ImageStreamSpec{
+				Tags: []imagev1.TagReference{
+					{
+						Name: "cluster-autoscaler",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "cluster-machine-approver",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "aws-cluster-api-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "cluster-capi-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "azure-cluster-api-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: "openstack-cluster-api-controllers",
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: util.AvailabilityProberImageName,
+						From: &corev1.ObjectReference{Name: ""},
+					},
+					{
+						Name: haproxy.HAProxyRouterImageName,
+						From: &corev1.ObjectReference{Name: ""},
+					},
+				},
+			},
+		},
+		StreamMetadata: &releaseinfo.CoreOSStreamMetadata{
+			Architectures: map[string]releaseinfo.CoreOSArchitecture{
+				"x86_64": {
+					Images: releaseinfo.CoreOSImages{
+						AWS: releaseinfo.CoreOSAWSImages{
+							Regions: map[string]releaseinfo.CoreOSAWSImage{
+								"us-east-1": {
+									Release: "us-east-1-x86_64-release",
+									Image:   "us-east-1-x86_64-image",
+								},
+							},
+						},
+					},
+				},
+				"aarch64": {
+					Images: releaseinfo.CoreOSImages{
+						AWS: releaseinfo.CoreOSAWSImages{
+							Regions: map[string]releaseinfo.CoreOSAWSImage{
+								"us-east-1": {
+									Release: "us-east-1-aarch64-release",
+									Image:   "us-east-1-aarch64-image",
+								},
+								"us-west-1": {
+									Release: "us-west-1-aarch64-release",
+									Image:   "",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	releaseImage.ImageStream.Name = version
+	return releaseImage
+}
+
 func TestValidMinorVersionCompatibility(t *testing.T) {
 	// Define base HostedCluster structure
 	baseHC := &hyperv1.HostedCluster{
@@ -195,6 +279,7 @@ func TestValidMinorVersionCompatibility(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		mockCtrl := gomock.NewController(t)
 		t.Run(test.name, func(t *testing.T) {
 			g := NewWithT(t)
 			t.Logf("Running test case: %s", test.name)
@@ -212,12 +297,11 @@ func TestValidMinorVersionCompatibility(t *testing.T) {
 			objs := []client.Object{hc, basePullSecret}
 			c := fake.NewClientBuilder().WithScheme(api.Scheme).WithObjects(objs...).Build()
 
-			releaseProvider := &fakereleaseprovider.FakeReleaseProvider{
-				Version: test.nodePoolVersion,
-			}
+			mockedReleaseProvider := releaseinfo.NewMockProvider(mockCtrl)
+			mockedReleaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).Times(1).Return(initReleaseImage(test.nodePoolVersion), nil)
 
 			// Run the test
-			err := validMinorVersionCompatibility(context.TODO(), c, "test-cluster", "test-namespace", test.nodePoolReleaseImage, releaseProvider)
+			err := validMinorVersionCompatibility(context.TODO(), c, "test-cluster", "test-namespace", test.nodePoolReleaseImage, mockedReleaseProvider)
 
 			// Check the results
 			if test.expectedError == "" {

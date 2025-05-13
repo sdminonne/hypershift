@@ -6,13 +6,15 @@ import (
 	. "github.com/onsi/gomega"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
+	"github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/imageprovider"
 	"github.com/openshift/hypershift/support/api"
-	"github.com/openshift/hypershift/support/testutil"
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"go.uber.org/mock/gomock"
 )
 
 const (
@@ -125,7 +127,21 @@ func TestCheckDependencies(t *testing.T) {
 		},
 	}
 
+	mockCtrl := gomock.NewController(t)
 	for _, tc := range testCases {
+		mockedReleaseImageProvider := imageprovider.NewMockReleaseImageProvider(mockCtrl)
+		mockedReleaseImageProvider.EXPECT().Version().AnyTimes().Return("4.18.0")
+		mockedReleaseImageProvider.EXPECT().ImageExist(gomock.Any()).AnyTimes().DoAndReturn(func(key string) (string, bool) {
+			return string(key), true
+		})
+		mockedReleaseImageProvider.EXPECT().GetImage(gomock.Any()).AnyTimes().DoAndReturn(func(key string) string {
+			return string(key)
+		})
+		mockedReleaseImageProvider.EXPECT().ComponentVersions().AnyTimes().DoAndReturn(func() (map[string]string, error) {
+			return map[string]string{
+				"kubernetes": "1.30.1",
+			}, nil
+		})
 		t.Run(tc.testName, func(t *testing.T) {
 			// Create a fresh client and context for each test case
 			client := fake.NewClientBuilder().WithScheme(api.Scheme).Build()
@@ -134,7 +150,7 @@ func TestCheckDependencies(t *testing.T) {
 				HCP: &hyperv1.HostedControlPlane{
 					Spec: hyperv1.HostedControlPlaneSpec{},
 				},
-				ReleaseImageProvider: testutil.FakeImageProvider(),
+				ReleaseImageProvider: mockedReleaseImageProvider,
 			}
 
 			var workload *controlPlaneWorkload[*appsv1.Deployment]

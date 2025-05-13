@@ -28,6 +28,7 @@ import (
 
 type CreateOrUpdateFN = func(ctx context.Context, c crclient.Client, obj crclient.Object, f controllerutil.MutateFn) (controllerutil.OperationResult, error)
 
+//go:generate ../../hack/tools/bin/mockgen -source=upsert.go -package=upsert -destination=upsert_mock.go
 type CreateOrUpdateProvider interface {
 	CreateOrUpdate(ctx context.Context, c crclient.Client, obj crclient.Object, f controllerutil.MutateFn) (controllerutil.OperationResult, error)
 }

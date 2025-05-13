@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/api/util/ipnet"
@@ -15,7 +16,7 @@ import (
 	kvinfra "github.com/openshift/hypershift/kubevirtexternalinfra"
 	"github.com/openshift/hypershift/support/api"
 	"github.com/openshift/hypershift/support/releaseinfo"
-	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
+	"github.com/openshift/hypershift/support/releaseinfo/testutils"
 	"github.com/openshift/hypershift/support/util"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -568,35 +569,11 @@ func TestDefaultNodePoolAMI(t *testing.T) {
 		},
 	}
 
+	//mockCtrl := gomock.NewController(t)
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
-
-			other := []client.Object{
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{Name: "pull-secret"},
-					Data: map[string][]byte{
-						corev1.DockerConfigJsonKey: nil,
-					},
-				},
-			}
-
-			client := fake.NewClientBuilder().WithObjects(other...).Build()
-			releaseProvider := &fakereleaseprovider.FakeReleaseProvider{}
-			hc := &hyperv1.HostedCluster{
-				Spec: hyperv1.HostedClusterSpec{
-					PullSecret: corev1.LocalObjectReference{
-						Name: "pull-secret",
-					},
-					Release: hyperv1.Release{
-						Image: "image-4.12.0",
-					},
-				},
-			}
-
-			ctx := context.Background()
-			tc.releaseImage = fakereleaseprovider.GetReleaseImage(ctx, hc, client, releaseProvider)
-
+			tc.releaseImage = testutils.InitReleaseImageOrDie("image-4.12.0")
 			tc.image, tc.err = defaultNodePoolAMI(tc.region, tc.specifiedArch, tc.releaseImage)
 			if strings.Contains(tc.name, "successfully") {
 				g.Expect(tc.image).To(Equal(tc.expectedImage))
@@ -672,13 +649,14 @@ func TestGetHostedClusterVersion(t *testing.T) {
 		},
 	}
 
+	mockCtrl := gomock.NewController(t)
 	for _, tc := range testCases {
+		mockedReleaseProvider := releaseinfo.NewMockProvider(mockCtrl)
+		mockedReleaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).Return(testutils.InitReleaseImageOrDie("4.15.0"), nil).AnyTimes()
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			releaseProvider := &fakereleaseprovider.FakeReleaseProvider{
-				Version: tc.releaseImageVersion,
-			}
+			releaseProvider := mockedReleaseProvider
 			r := NodePoolReconciler{
 				ReleaseProvider: releaseProvider,
 			}

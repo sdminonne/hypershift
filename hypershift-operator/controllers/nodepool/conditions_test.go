@@ -7,11 +7,13 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests/ignitionserver"
 	"github.com/openshift/hypershift/support/api"
-	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
+	"github.com/openshift/hypershift/support/releaseinfo"
+	"github.com/openshift/hypershift/support/releaseinfo/testutils"
 	"github.com/openshift/hypershift/support/thirdparty/library-go/pkg/image/dockerv1client"
 	"github.com/openshift/hypershift/support/util/fakeimagemetadataprovider"
 
@@ -161,7 +163,7 @@ func TestUpdatingConfigCondition(t *testing.T) {
 			expectedMessagePart:   "true",
 		},
 	}
-
+	mockCtrl := gomock.NewController(t)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.TODO()
@@ -220,9 +222,11 @@ func TestUpdatingConfigCondition(t *testing.T) {
 				ignitionConfig3,
 			).Build()
 
+			mockedReleaseProvider := releaseinfo.NewMockProvider(mockCtrl)
+			mockedReleaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).Return(testutils.InitReleaseImageOrDie("4.18.0"), nil).Times(4)
 			r := &NodePoolReconciler{
 				Client:          client,
-				ReleaseProvider: &fakereleaseprovider.FakeReleaseProvider{Version: semver.MustParse("4.18.0").String()},
+				ReleaseProvider: mockedReleaseProvider,
 				ImageMetadataProvider: &fakeimagemetadataprovider.FakeRegistryClientImageMetadataProvider{
 					Result: &dockerv1client.DockerImageConfig{
 						Config: &docker10.DockerConfig{
@@ -315,7 +319,7 @@ func TestUpdatingVersionCondition(t *testing.T) {
 			expectedMessagePart:   "true",
 		},
 	}
-
+	mockCtrl := gomock.NewController(t)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.TODO()
@@ -369,10 +373,11 @@ func TestUpdatingVersionCondition(t *testing.T) {
 				ignitionConfig2,
 				ignitionConfig3,
 			).Build()
-
+			mockedRelaseProvider := releaseinfo.NewMockProvider(mockCtrl)
+			mockedRelaseProvider.EXPECT().Lookup(gomock.Any(), gomock.Any(), gomock.Any()).Return(testutils.InitReleaseImageOrDie("4.18.0"), nil).AnyTimes()
 			r := &NodePoolReconciler{
 				Client:          client,
-				ReleaseProvider: &fakereleaseprovider.FakeReleaseProvider{Version: semver.MustParse("4.18.0").String()},
+				ReleaseProvider: mockedRelaseProvider, //,&fakereleaseprovider.FakeReleaseProvider{Version: semver.MustParse("4.18.0").String()},
 				ImageMetadataProvider: &fakeimagemetadataprovider.FakeRegistryClientImageMetadataProvider{
 					Result: &dockerv1client.DockerImageConfig{
 						Config: &docker10.DockerConfig{
