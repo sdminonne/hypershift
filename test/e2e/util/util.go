@@ -25,6 +25,7 @@ import (
 	hcmetrics "github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster/metrics"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests"
 	karpenterassets "github.com/openshift/hypershift/karpenter-operator/controllers/karpenter/assets"
+	"github.com/openshift/hypershift/support/azureutil"
 	"github.com/openshift/hypershift/support/certs"
 	"github.com/openshift/hypershift/support/conditions"
 	suppconfig "github.com/openshift/hypershift/support/config"
@@ -60,8 +61,11 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
 	kubeclient "k8s.io/client-go/kubernetes"
+	kscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 
@@ -73,6 +77,8 @@ import (
 	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 	"go.uber.org/zap/zaptest"
 )
@@ -1397,6 +1403,57 @@ func RunQueryAtTime(ctx context.Context, log logr.Logger, prometheusClient prome
 	}, nil
 }
 
+// getExportedMetrics exec curl command in HO pod metrics endpoint and return metric values if any
+func getExportedMetrics(ctx context.Context, log logr.Logger, config *restclient.Config) (map[string]*dto.MetricFamily, error) {
+	kubeClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err)
+	}
+	hoPods, err := kubeClient.CoreV1().Pods("hypershift").List(context.Background(),
+		metav1.ListOptions{LabelSelector: "app=operator,hypershift.openshift.io/operator-component=operator"})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't retrieve HO Pods: %v", err)
+	}
+	if len(hoPods.Items) == 0 {
+		return nil, fmt.Errorf("coldn't find any HO Pods")
+	}
+	hoPod := hoPods.Items[0]
+
+	podIP := hoPod.Status.PodIP
+	curlArg := "http://" + podIP + ":9000/metrics"
+	req := kubeClient.CoreV1().RESTClient().Post().Resource("pods").Name(hoPod.Name).Namespace("hypershift").SubResource("exec").VersionedParams(
+		&corev1.PodExecOptions{
+			Command: []string{
+				"curl", // assuming curl is available in HO base image
+				curlArg,
+			},
+			Stdin:  false,
+			Stdout: true,
+			Stderr: true,
+		},
+		kscheme.ParameterCodec,
+	)
+
+	exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		return nil, fmt.Errorf("couldn't execute curl %s: %v", hoPod.Name, err)
+	}
+
+	var stdoutBuff, stderrBuff bytes.Buffer
+	err = exec.StreamWithContext(context.TODO(), remotecommand.StreamOptions{
+		Stdin:  nil,
+		Stdout: &stdoutBuff,
+		Stderr: &stderrBuff,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't stream exec curl output: %v", err)
+	}
+
+	var parser expfmt.TextParser
+	return parser.TextToMetricFamilies(bytes.NewReader(stdoutBuff.Bytes()))
+
+}
+
 func EnsurePodsWithEmptyDirPVsHaveSafeToEvictAnnotations(t *testing.T, ctx context.Context, hostClient crclient.Client, hcpNs string) {
 	t.Run("EnsurePodsWithEmptyDirPVsHaveSafeToEvictAnnotations", func(t *testing.T) {
 		g := NewWithT(t)
@@ -2211,27 +2268,39 @@ func ValidateMetrics(t *testing.T, ctx context.Context, hc *hyperv1.HostedCluste
 			t.Skip("skipping on None platform")
 		}
 
-		if hc.Spec.Platform.Type == hyperv1.AzurePlatform {
-			t.Skip("skipping on Azure platform")
-		}
-
 		g := NewWithT(t)
 
-		prometheusClient, err := NewPrometheusClient(ctx)
+		config, err := GetConfig()
+		if err != nil {
+			panic(err)
+		}
 		g.Expect(err).ToNot(HaveOccurred())
 
 		// Polling to prevent races with prometheus scrape interval.
 		err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+			mf, err := getExportedMetrics(ctx, NewLogr(t), config)
+			if err != nil {
+				return false, err
+			}
+
 			for _, metricName := range metricsNames {
-				// Query fo HC specific metrics by hc.name.
-				query := fmt.Sprintf("%v{name=\"%s\"}", metricName, hc.Name)
-				if metricName == HypershiftOperatorInfoName {
-					// Query HO info metric
-					query = HypershiftOperatorInfoName
-				}
-				if strings.HasPrefix(metricName, "hypershift_nodepools") {
-					query = fmt.Sprintf("%v{cluster_name=\"%s\"}", metricName, hc.Name)
-				}
+
+				//if strings.HasPrefix(metricName, "hypershift_nodepools") {
+				//	for _, l := range m.GetLabel() {
+				//		if l != nil && l.GetName() == "cluster_name" && l.GetValue() == hc.Name {
+				//			return true, nil
+				//		}
+				//	}
+				//}
+				//query := fmt.Sprintf("%v{name=\"%s\"}", metricName, hc.Name)
+				//for _, m := range v.Metric {
+				//	for _, l := range m.GetLabel() {
+				//		if l != nil && l.GetName() == "name" && l.GetValue() == hc.Name {
+				//			return true, nil
+				//		}
+				//	}
+				//}
+
 				// upgrade metric is only available for TestUpgradeControlPlane
 				if metricName == hcmetrics.UpgradingDurationMetricName && !strings.HasPrefix("TestUpgradeControlPlane", t.Name()) {
 					continue
@@ -2242,22 +2311,24 @@ func ValidateMetrics(t *testing.T, ctx context.Context, hc *hyperv1.HostedCluste
 						hc.Spec.AutoNode.Provisioner.Karpenter.Platform != hyperv1.AWSPlatform || hc.Status.KubeConfig == nil {
 						continue
 					}
-					query = metricName
 				}
 
-				result, err := RunQueryAtTime(ctx, NewLogr(t), prometheusClient, query, time.Now())
-				if err != nil {
-					return false, err
+				if metricName == hcmetrics.HostedClusterManagedAzureInfoMetricName {
+					if !(azureutil.IsAroHCP()) { // only for ARO
+						continue
+					}
 				}
+
+				v, ok := mf[metricName]
 
 				if areMetricsExpectedToBePresent {
-					if len(result.Data.Result) < 1 {
+					if !ok || v == nil {
 						t.Logf("Expected results for metric %q, found none", metricName)
 						return false, nil
 					}
 				} else {
-					if len(result.Data.Result) > 0 {
-						t.Logf("Expected 0 results for metric %q, found %d", metricName, len(result.Data.Result))
+					if ok {
+						t.Logf("Expected 0 results for metric %q, found more than one", metricName)
 						return false, nil
 					}
 				}
