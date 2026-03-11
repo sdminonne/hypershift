@@ -365,15 +365,15 @@ func (c *nodePoolsMetricsCollector) retrieveVCpusDetailsPerNode(nodePool *hyperv
 		return vCpusCountPerNode, ""
 	}
 
-	// Try EC2 API
-	vCpusCount, errReason := extractCPUFromInstanceTypeNameViaEC2API(ec2InstanceType, c.ec2Client)
-	if errReason == "" {
-		c.ec2InstanceTypeToVCpusCount[ec2InstanceType] = vCpusCount
-		return vCpusCount, ""
-	}
+	// // Try EC2 API
+	// vCpusCount, errReason := extractCPUFromInstanceTypeNameViaEC2API(ec2InstanceType, c.ec2Client)
+	// if errReason == "" {
+	// 	c.ec2InstanceTypeToVCpusCount[ec2InstanceType] = vCpusCount
+	// 	return vCpusCount, ""
+	// }
 
 	// Try Pricing API
-	vCpusCount, errReason = extractCPUFromInstanceTypeNameViaPricingAPI(ec2InstanceType, c.pricingClient)
+	vCpusCount, errReason := extractCPUFromInstanceTypeNameViaPricingAPI(ec2InstanceType, c.pricingClient)
 	if errReason == "" {
 		c.ec2InstanceTypeToVCpusCount[ec2InstanceType] = vCpusCount
 		return vCpusCount, ""

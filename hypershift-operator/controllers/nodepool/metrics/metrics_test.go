@@ -134,9 +134,12 @@ func TestReportVCpusCountByHCluster(t *testing.T) {
 			npsParams: []nodePoolParams{
 				{availableNodesCount: 2, ec2InstanceType: "m5.xlarge"},
 			},
-			MockedEC2DescribeInstanceTypesFunc: func(ctx context.Context, input *ec2v2.DescribeInstanceTypesInput, optFns ...func(*ec2v2.Options)) (*ec2v2.DescribeInstanceTypesOutput, error) {
-				return initDescribeInstanceTypesOutput([]ec2typesv2.InstanceTypeInfo{
-					initInstanceTypeInfo("m5.xlarge", 4)}), nil
+			MockedGetProductsFunc: func(ctx context.Context, input *pricingv2.GetProductsInput, optFns ...func(*pricingv2.Options)) (*pricingv2.GetProductsOutput, error) {
+				return &pricingv2.GetProductsOutput{
+					PriceList: []string{
+						`{"product": {"attributes": {"instanceType": "m5.xlarge", "vcpu": "4"}}}`,
+					},
+				}, nil
 			},
 			expectedVCpusCount: 8,
 		},
@@ -146,9 +149,12 @@ func TestReportVCpusCountByHCluster(t *testing.T) {
 				{availableNodesCount: 2, ec2InstanceType: "m5.2xlarge"},
 				{availableNodesCount: 2, ec2InstanceType: "m5.2xlarge"},
 			},
-			MockedEC2DescribeInstanceTypesFunc: func(ctx context.Context, input *ec2v2.DescribeInstanceTypesInput, optFns ...func(*ec2v2.Options)) (*ec2v2.DescribeInstanceTypesOutput, error) {
-				return initDescribeInstanceTypesOutput([]ec2typesv2.InstanceTypeInfo{
-					initInstanceTypeInfo("m5.2xlarge", 8)}), nil
+			MockedGetProductsFunc: func(ctx context.Context, input *pricingv2.GetProductsInput, optFns ...func(*pricingv2.Options)) (*pricingv2.GetProductsOutput, error) {
+				return &pricingv2.GetProductsOutput{
+					PriceList: []string{
+						`{"product": {"attributes": {"instanceType": "m5.2xlarge", "vcpu": "8"}}}`,
+					},
+				}, nil
 			},
 			expectedVCpusCount: 32,
 		},
@@ -316,7 +322,7 @@ func TestReportVCpusCountByHCluster(t *testing.T) {
 			expectedVCpusCountErrorReason: string(rosaCPUsInstanceTypesConfigNotFoundErrorReason),
 		},
 		{
-			name: "When EC2 API succeeds and ConfigMap also has a value, it should use the EC2 API vCPU count",
+			name: "When Pricing API succeeds and ConfigMap also has a value, it should use the Pricing API vCPU count",
 			npsParams: []nodePoolParams{
 				{availableNodesCount: 3, ec2InstanceType: "m5.xlarge"},
 			},
@@ -329,17 +335,20 @@ func TestReportVCpusCountByHCluster(t *testing.T) {
 					"m5.xlarge": "16",
 				},
 			},
-			// EC2 API returns 4 vCPUs for m5.xlarge and ConfigMap says 16.
-			// EC2 API has priority; result should be 3 nodes * 4 vCPUs = 12.
-			MockedEC2DescribeInstanceTypesFunc: func(ctx context.Context, input *ec2v2.DescribeInstanceTypesInput, optFns ...func(*ec2v2.Options)) (*ec2v2.DescribeInstanceTypesOutput, error) {
-				return initDescribeInstanceTypesOutput([]ec2typesv2.InstanceTypeInfo{
-					initInstanceTypeInfo("m5.xlarge", 4)}), nil
+			// Pricing API returns 4 vCPUs for m5.xlarge and ConfigMap says 16.
+			// Pricing API has priority; result should be 3 nodes * 4 vCPUs = 12.
+			MockedGetProductsFunc: func(ctx context.Context, input *pricingv2.GetProductsInput, optFns ...func(*pricingv2.Options)) (*pricingv2.GetProductsOutput, error) {
+				return &pricingv2.GetProductsOutput{
+					PriceList: []string{
+						`{"product": {"attributes": {"instanceType": "m5.xlarge", "vcpu": "4"}}}`,
+					},
+				}, nil
 			},
 			expectedVCpusCount:            12,
 			expectedVCpusCountErrorReason: "",
 		},
 		{
-			name: "When EC2 API succeeds, it should use EC2 value even if ConfigMap exists with other instance types",
+			name: "When Pricing API succeeds, it should use Pricing value even if ConfigMap exists with other instance types",
 			npsParams: []nodePoolParams{
 				{availableNodesCount: 2, ec2InstanceType: "m5.2xlarge"},
 			},
@@ -352,9 +361,12 @@ func TestReportVCpusCountByHCluster(t *testing.T) {
 					"other-instance.xlarge": "99",
 				},
 			},
-			MockedEC2DescribeInstanceTypesFunc: func(ctx context.Context, input *ec2v2.DescribeInstanceTypesInput, optFns ...func(*ec2v2.Options)) (*ec2v2.DescribeInstanceTypesOutput, error) {
-				return initDescribeInstanceTypesOutput([]ec2typesv2.InstanceTypeInfo{
-					initInstanceTypeInfo("m5.2xlarge", 8)}), nil
+			MockedGetProductsFunc: func(ctx context.Context, input *pricingv2.GetProductsInput, optFns ...func(*pricingv2.Options)) (*pricingv2.GetProductsOutput, error) {
+				return &pricingv2.GetProductsOutput{
+					PriceList: []string{
+						`{"product": {"attributes": {"instanceType": "m5.2xlarge", "vcpu": "8"}}}`,
+					},
+				}, nil
 			},
 			expectedVCpusCount:            16,
 			expectedVCpusCountErrorReason: "",
