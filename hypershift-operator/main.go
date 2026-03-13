@@ -57,7 +57,6 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
-	awsv2config "github.com/aws/aws-sdk-go-v2/config"
 	ec2v2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	pricingv2 "github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -429,21 +428,17 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		awsConfig := awsutil.NewConfig()
 		ec2ClientV1 = ec2.New(awsSession, awsConfig)
 
-		// Create AWS SDK v2 config for metrics EC2 client
-		awsCfg, err := awsv2config.LoadDefaultConfig(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to load AWS SDK v2 config: %w", err)
-		}
-		ec2ClientV2 = ec2v2.NewFromConfig(awsCfg)
+		// Create AWS SDK v2 config for metrics EC2 client using the same
+		// credentials file as the OIDC S3 client, so we don't fall through
+		// to IMDS (which is unreachable from the pod network).
+		awsMetricsCfg := awsutil.NewSessionV2(ctx, "hypershift-operator-metrics", opts.OIDCStorageProviderS3Credentials, "", "", "")
+		ec2ClientV2 = ec2v2.NewFromConfig(*awsMetricsCfg)
 
 		// Create AWS SDK v2 config for Pricing client.
 		// The AWS Pricing API is only available in us-east-1 and ap-south-1.
 		const awsPricingAPIRegion = "us-east-1"
-		pricingCfg, err := awsv2config.LoadDefaultConfig(ctx, awsv2config.WithRegion(awsPricingAPIRegion))
-		if err != nil {
-			return fmt.Errorf("failed to load AWS SDK v2 config for pricing: %w", err)
-		}
-		pricingClient = pricingv2.NewFromConfig(pricingCfg)
+		awsPricingCfg := awsutil.NewSessionV2(ctx, "hypershift-operator-metrics", opts.OIDCStorageProviderS3Credentials, "", "", awsPricingAPIRegion)
+		pricingClient = pricingv2.NewFromConfig(*awsPricingCfg)
 	}
 
 	npmetrics.CreateAndRegisterNodePoolsMetricsCollector(mgr.GetClient(), ec2ClientV2, pricingClient)
