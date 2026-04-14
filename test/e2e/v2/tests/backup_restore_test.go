@@ -30,8 +30,12 @@ import (
 	"github.com/openshift/hypershift/test/e2e/util"
 	"github.com/openshift/hypershift/test/e2e/v2/backuprestore"
 	"github.com/openshift/hypershift/test/e2e/v2/internal"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -329,3 +333,255 @@ func getNodePool(testCtx *internal.TestContext) (*hyperv1.NodePool, error) {
 	}
 	return nil, fmt.Errorf("no NodePool found for cluster %s", testCtx.ClusterName)
 }
+
+
+var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snapshot"), Ordered, Serial, func() {
+
+	var (
+		platformCfg        backupRestorePlatformConfig
+		testCtx            *internal.TestContext
+		backupName         string
+		restoreName        string
+		snapshotURL        string
+		expectedConditions []util.Condition
+	)
+
+	BeforeAll(func() {
+		testCtx = internal.GetTestContext()
+		Expect(testCtx).NotTo(BeNil())
+		hostedCluster := testCtx.GetHostedCluster()
+		Expect(hostedCluster).NotTo(BeNil(), "HostedCluster should be set up")
+		if hostedCluster.Spec.Platform.Type != hyperv1.AWSPlatform {
+			Skip("etcd snapshot backup test only supported on AWS")
+		}
+		platformCfg = backupRestorePlatforms[hyperv1.AWSPlatform]
+
+		By("Configuring the hypershift-oadp-plugin-config ConfigMap")
+		cm := &corev1.ConfigMap{}
+		cmKey := types.NamespacedName{
+			Name:      "hypershift-oadp-plugin-config",
+			Namespace: backuprestore.DefaultOADPNamespace,
+		}
+		var originalData map[string]string
+		cmExisted := true
+		err := testCtx.MgmtClient.Get(testCtx.Context, cmKey, cm)
+		if apierrors.IsNotFound(err) {
+			cmExisted = false
+			cm = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cmKey.Name,
+					Namespace: cmKey.Namespace,
+				},
+				Data: map[string]string{
+					"etcdBackupMethod": "etcdSnapshot",
+				},
+			}
+			err = testCtx.MgmtClient.Create(testCtx.Context, cm)
+			Expect(err).NotTo(HaveOccurred())
+		} else {
+			Expect(err).NotTo(HaveOccurred())
+			if cm.Data != nil {
+				originalData = make(map[string]string, len(cm.Data))
+				for k, v := range cm.Data {
+					originalData[k] = v
+				}
+			}
+			if cm.Data == nil {
+				cm.Data = map[string]string{}
+			}
+			cm.Data["etcdBackupMethod"] = "etcdSnapshot"
+			err = testCtx.MgmtClient.Update(testCtx.Context, cm)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		DeferCleanup(func() {
+			By("Cleaning up hypershift-oadp-plugin-config ConfigMap")
+			configMap := &corev1.ConfigMap{}
+			if err := testCtx.MgmtClient.Get(testCtx.Context, cmKey, configMap); err != nil {
+				if !apierrors.IsNotFound(err) {
+					GinkgoWriter.Printf("Failed to get ConfigMap during cleanup: %v\n", err)
+				}
+				return
+			}
+			if !cmExisted {
+				if err := testCtx.MgmtClient.Delete(testCtx.Context, configMap); err != nil && !apierrors.IsNotFound(err) {
+					GinkgoWriter.Printf("Failed to delete ConfigMap during cleanup: %v\n", err)
+				}
+				return
+			}
+			configMap.Data = originalData
+			if err := testCtx.MgmtClient.Update(testCtx.Context, configMap); err != nil {
+				GinkgoWriter.Printf("Failed to restore ConfigMap during cleanup: %v\n", err)
+			}
+		})
+	})
+
+	BeforeEach(func() {
+		testCtx = internal.GetTestContext()
+		Expect(testCtx).NotTo(BeNil())
+		if err := testCtx.ValidateControlPlaneNamespace(); err != nil {
+			AbortSuite(err.Error())
+		}
+
+		err := backuprestore.EnsureVeleroPodRunning(testCtx)
+		if err != nil {
+			Fail(fmt.Sprintf("Velero is not running: %v", err))
+		}
+	})
+
+	Context(ContextPreBackupControlPlane, func() {
+		It("should have control plane healthy before backup", func() {
+			err := internal.ValidateControlPlaneDeploymentsReadiness(testCtx, platformCfg.excludeWorkloads)
+			Expect(err).NotTo(HaveOccurred())
+			err = internal.ValidateControlPlaneStatefulSetsReadiness(testCtx, platformCfg.excludeWorkloads)
+			Expect(err).NotTo(HaveOccurred())
+			nodePool, err := getNodePool(testCtx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodePool).NotTo(BeNil())
+			npConditions := conditions.ExpectedNodePoolConditions(nodePool)
+
+			latestVersion, err := supportedversion.GetLatestSupportedOCPVersion(testCtx.Context, testCtx.MgmtClient)
+			Expect(err).NotTo(HaveOccurred())
+			if latestVersion.LT(util.Version421) {
+				delete(npConditions, hyperv1.NodePoolSupportedVersionSkewConditionType)
+			}
+
+			for conditionType, conditionStatus := range npConditions {
+				expectedConditions = append(expectedConditions, util.Condition{
+					Type:   conditionType,
+					Status: metav1.ConditionStatus(conditionStatus),
+				})
+			}
+			internal.ValidateConditions(NewWithT(GinkgoT()), nodePool, expectedConditions)
+		})
+	})
+
+	Context(ContextBackup, func() {
+		It("should create backup with etcd snapshot method", func() {
+			By("Creating backup with snapshotMoveData=false")
+			backupName = oadp.GenerateBackupName(
+				testCtx.ClusterName,
+				testCtx.ClusterNamespace,
+			)
+			backupOpts := &backuprestore.OADPBackupOptions{
+				Name:             backupName,
+				HCName:           testCtx.ClusterName,
+				HCNamespace:      testCtx.ClusterNamespace,
+				StorageLocation:  testCtx.ClusterName,
+				SnapshotMoveData: ptr.To(false),
+			}
+			err := backuprestore.RunOADPBackup(testCtx.Context, GinkgoLogr.WithName("backup-restore"), testCtx.ArtifactDir, backupOpts)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Waiting for backup to complete")
+			err = backuprestore.WaitForBackupCompletion(testCtx, backupName)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("VerifyEtcdSnapshotBackup", func() {
+		It("should have HCPEtcdBackup with snapshotURL matching the backup created in this run", func() {
+			By("Waiting for HCPEtcdBackup to have a snapshotURL")
+			Eventually(func(g Gomega) {
+				hcpEtcdBackupList := &hyperv1.HCPEtcdBackupList{}
+				err := testCtx.MgmtClient.List(testCtx.Context, hcpEtcdBackupList, crclient.InNamespace(testCtx.ControlPlaneNamespace))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(hcpEtcdBackupList.Items).NotTo(BeEmpty(), "expected at least one HCPEtcdBackup resource")
+
+				found := false
+				for _, backup := range hcpEtcdBackupList.Items {
+					if backup.Name == backupName && backup.Status.SnapshotURL != "" {
+						snapshotURL = backup.Status.SnapshotURL
+						found = true
+						GinkgoWriter.Printf("Found HCPEtcdBackup %s with snapshotURL: %s\n", backup.Name, backup.Status.SnapshotURL)
+						break
+					}
+				}
+				g.Expect(found).To(BeTrue(), fmt.Sprintf("expected HCPEtcdBackup %s to have a non-empty snapshotURL", backupName))
+			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.BackupTimeout).Should(Succeed())
+		})
+
+		It("should have lastSuccessfulEtcdBackupURL on HostedCluster status matching the snapshot", func() {
+			Expect(snapshotURL).NotTo(BeEmpty(), "snapshotURL must be captured from the previous spec")
+			By("Waiting for HostedCluster lastSuccessfulEtcdBackupURL to match the snapshot")
+			Eventually(func(g Gomega) {
+				hostedCluster := &hyperv1.HostedCluster{}
+				err := testCtx.MgmtClient.Get(testCtx.Context, crclient.ObjectKey{
+					Name:      testCtx.ClusterName,
+					Namespace: testCtx.ClusterNamespace,
+				}, hostedCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(hostedCluster.Status.LastSuccessfulEtcdBackupURL).To(Equal(snapshotURL),
+					"expected HostedCluster lastSuccessfulEtcdBackupURL to match the snapshot created in this run")
+			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.BackupTimeout).Should(Succeed())
+			GinkgoWriter.Printf("HostedCluster lastSuccessfulEtcdBackupURL matches snapshotURL: %s\n", snapshotURL)
+		})
+	})
+
+	Context(ContextBreakControlPlane, func() {
+		It("should break hosted cluster", func() {
+			err := backuprestore.BreakHostedClusterPreservingMachines(testCtx, GinkgoLogr.WithName("cleanup"))
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context(ContextRestore, func() {
+		It("should restore from backup successfully", func() {
+			By("Creating Restore")
+			restoreName = oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
+			restoreOpts := &backuprestore.OADPRestoreOptions{
+				Name:       restoreName,
+				FromBackup: backupName,
+				HCName:     testCtx.ClusterName,
+				HCNamespace: testCtx.ClusterNamespace,
+			}
+			err := backuprestore.RunOADPRestore(testCtx.Context, GinkgoLogr.WithName("backup-restore"), testCtx.ArtifactDir, restoreOpts)
+			Expect(err).NotTo(HaveOccurred())
+			By("Waiting for restore to complete")
+			err = backuprestore.WaitForRestoreCompletion(testCtx, restoreName)
+			Expect(err).NotTo(HaveOccurred())
+
+			if platformCfg.postRestoreHook != nil {
+				By("Running platform-specific post-restore operations")
+				err = platformCfg.postRestoreHook(testCtx)
+				Expect(err).NotTo(HaveOccurred())
+			}
+		})
+	})
+
+	Context(ContextPostRestoreControlPlane, func() {
+		It("should have control plane healthy after restore", func() {
+			By("Waiting for control plane statefulsets to be ready")
+			err := internal.WaitForControlPlaneStatefulSetsReadiness(testCtx, backuprestore.RestoreTimeout, platformCfg.excludeWorkloads)
+			Expect(err).NotTo(HaveOccurred())
+			By("Waiting for control plane deployments to be ready")
+			err = internal.WaitForControlPlaneDeploymentsReadiness(testCtx, backuprestore.RestoreTimeout, platformCfg.excludeWorkloads)
+			Expect(err).NotTo(HaveOccurred())
+			By("Validating NodePool conditions")
+			Eventually(func(g Gomega) {
+				nodePool, err := getNodePool(testCtx)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(nodePool).NotTo(BeNil())
+				internal.ValidateConditions(g, nodePool, expectedConditions)
+			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.OIDCTimeout).Should(Succeed())
+		})
+
+		It("should have restoreSnapshotURL set on HostedCluster after restore matching the snapshot", func() {
+			Expect(snapshotURL).NotTo(BeEmpty(), "snapshotURL must be captured from the backup verification spec")
+			Eventually(func(g Gomega) {
+				hostedCluster := &hyperv1.HostedCluster{}
+				err := testCtx.MgmtClient.Get(testCtx.Context, crclient.ObjectKey{
+					Name:      testCtx.ClusterName,
+					Namespace: testCtx.ClusterNamespace,
+				}, hostedCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(hostedCluster.Spec.Etcd.Managed).NotTo(BeNil(), "expected managed etcd spec to be set")
+				g.Expect(hostedCluster.Spec.Etcd.Managed.Storage.RestoreSnapshotURL).To(HaveLen(1),
+					"expected restoreSnapshotURL to contain exactly one entry")
+				g.Expect(hostedCluster.Spec.Etcd.Managed.Storage.RestoreSnapshotURL[0]).To(Equal(snapshotURL),
+					"expected restoreSnapshotURL to match the snapshot created in this run")
+			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.RestoreTimeout).Should(Succeed())
+			GinkgoWriter.Printf("RestoreSnapshotURL matches snapshotURL: %s\n", snapshotURL)
+		})
+	})
+})
