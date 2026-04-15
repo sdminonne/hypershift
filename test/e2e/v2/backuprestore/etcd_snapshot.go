@@ -122,10 +122,13 @@ func VerifyEtcdInitLogs(ctx context.Context, logger logr.Logger, kubeClient kube
 	}
 	defer logStream.Close()
 
+	const tailSize = 50
+
 	var (
 		foundDownload bool
 		foundRestore  bool
-		logLines      []string
+		lineCount     int
+		tailLines     []string
 	)
 
 	scanner := bufio.NewScanner(logStream)
@@ -133,7 +136,11 @@ func VerifyEtcdInitLogs(ctx context.Context, logger logr.Logger, kubeClient kube
 	scanner.Buffer(buf, 512*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		logLines = append(logLines, line)
+		lineCount++
+		if len(tailLines) == tailSize {
+			tailLines = tailLines[1:]
+		}
+		tailLines = append(tailLines, line)
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "snapshot downloaded successfully") {
 			foundDownload = true
@@ -146,15 +153,18 @@ func VerifyEtcdInitLogs(ctx context.Context, logger logr.Logger, kubeClient kube
 		return fmt.Errorf("error reading etcd-init logs: %w", err)
 	}
 
-	logger.Info("etcd-init container logs collected", "lines", len(logLines))
-	for _, line := range logLines {
-		logger.V(1).Info("etcd-init", "log", line)
-	}
+	logger.Info("etcd-init container logs scanned", "lines", lineCount)
 
 	if !foundDownload {
+		for _, line := range tailLines {
+			logger.V(1).Info("etcd-init tail", "log", line)
+		}
 		return fmt.Errorf("etcd-init logs do not contain 'snapshot downloaded successfully'; snapshot download may have failed")
 	}
 	if !foundRestore {
+		for _, line := range tailLines {
+			logger.V(1).Info("etcd-init tail", "log", line)
+		}
 		return fmt.Errorf("etcd-init logs do not contain 'snapshot restore succeeded' or 'etcd snapshot restored successfully'; restore may have failed")
 	}
 
