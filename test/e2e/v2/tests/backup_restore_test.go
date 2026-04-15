@@ -35,7 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
+	"k8s.io/client-go/kubernetes"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -356,6 +356,18 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		}
 		platformCfg = backupRestorePlatforms[hyperv1.AWSPlatform]
 
+		By("Checking if HCPEtcdBackup feature gate is enabled")
+		hcpEtcdBackupList := &hyperv1.HCPEtcdBackupList{}
+		err := testCtx.MgmtClient.List(testCtx.Context, hcpEtcdBackupList, crclient.InNamespace(testCtx.ControlPlaneNamespace))
+		if err != nil {
+			if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+				Skip("HCPEtcdBackup feature gate is not enabled (CRD not installed). " +
+					"Set HYPERSHIFT_FEATURESET=TechPreviewNoUpgrade on the HyperShift operator to enable it.")
+			}
+			// Other errors are unexpected - fail loudly
+			Expect(err).NotTo(HaveOccurred(), "unexpected error listing HCPEtcdBackup resources")
+		}
+
 		By("Configuring the hypershift-oadp-plugin-config ConfigMap")
 		cm := &corev1.ConfigMap{}
 		cmKey := types.NamespacedName{
@@ -364,7 +376,7 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		}
 		var originalData map[string]string
 		cmExisted := true
-		err := testCtx.MgmtClient.Get(testCtx.Context, cmKey, cm)
+		err = testCtx.MgmtClient.Get(testCtx.Context, cmKey, cm)
 		if apierrors.IsNotFound(err) {
 			cmExisted = false
 			cm = &corev1.ConfigMap{
@@ -458,18 +470,17 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 
 	Context(ContextBackup, func() {
 		It("should create backup with etcd snapshot method", func() {
-			By("Creating backup with snapshotMoveData=false")
+			By("Creating backup with etcd snapshot options")
 			backupName = oadp.GenerateBackupName(
 				testCtx.ClusterName,
 				testCtx.ClusterNamespace,
 			)
-			backupOpts := &backuprestore.OADPBackupOptions{
-				Name:             backupName,
-				HCName:           testCtx.ClusterName,
-				HCNamespace:      testCtx.ClusterNamespace,
-				StorageLocation:  testCtx.ClusterName,
-				SnapshotMoveData: ptr.To(false),
-			}
+			backupOpts := backuprestore.EtcdSnapshotBackupOptions(
+				backupName,
+				testCtx.ClusterName,
+				testCtx.ClusterNamespace,
+				testCtx.ClusterName,
+			)
 			err := backuprestore.RunOADPBackup(testCtx.Context, GinkgoLogr.WithName("backup-restore"), testCtx.ArtifactDir, backupOpts)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -480,6 +491,12 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 	})
 
 	Context("VerifyEtcdSnapshotBackup", func() {
+		It("should have HCPEtcdBackup with BackupCompleted=True", func() {
+			By("Waiting for HCPEtcdBackup BackupCompleted condition to be True")
+			err := backuprestore.WaitForHCPEtcdBackupCondition(testCtx, backupName, metav1.ConditionTrue)
+			Expect(err).NotTo(HaveOccurred(), "HCPEtcdBackup %s should have BackupCompleted=True", backupName)
+		})
+
 		It("should have HCPEtcdBackup with snapshotURL matching the backup created in this run", func() {
 			By("Waiting for HCPEtcdBackup to have a snapshotURL")
 			Eventually(func(g Gomega) {
@@ -527,14 +544,14 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 
 	Context(ContextRestore, func() {
 		It("should restore from backup successfully", func() {
-			By("Creating Restore")
+			By("Creating Restore with etcd snapshot options")
 			restoreName = oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
-			restoreOpts := &backuprestore.OADPRestoreOptions{
-				Name:       restoreName,
-				FromBackup: backupName,
-				HCName:     testCtx.ClusterName,
-				HCNamespace: testCtx.ClusterNamespace,
-			}
+			restoreOpts := backuprestore.EtcdSnapshotRestoreOptions(
+				restoreName,
+				backupName,
+				testCtx.ClusterName,
+				testCtx.ClusterNamespace,
+			)
 			err := backuprestore.RunOADPRestore(testCtx.Context, GinkgoLogr.WithName("backup-restore"), testCtx.ArtifactDir, restoreOpts)
 			Expect(err).NotTo(HaveOccurred())
 			By("Waiting for restore to complete")
@@ -582,6 +599,17 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 					"expected restoreSnapshotURL to match the snapshot created in this run")
 			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.RestoreTimeout).Should(Succeed())
 			GinkgoWriter.Printf("RestoreSnapshotURL matches snapshotURL: %s\n", snapshotURL)
+		})
+
+		It("should have etcd-init container logs showing successful snapshot restore", func() {
+			By("Verifying etcd-0 init container logs for snapshot restore traces")
+			restConfig, err := util.GetConfig()
+			Expect(err).NotTo(HaveOccurred(), "failed to get REST config for pod log access")
+			kubeClient, err := kubernetes.NewForConfig(restConfig)
+			Expect(err).NotTo(HaveOccurred(), "failed to create kubernetes clientset")
+
+			err = backuprestore.VerifyEtcdInitLogs(testCtx.Context, GinkgoLogr.WithName("etcd-init"), kubeClient, testCtx.ControlPlaneNamespace)
+			Expect(err).NotTo(HaveOccurred(), "etcd-init container logs should confirm snapshot restore")
 		})
 	})
 })
