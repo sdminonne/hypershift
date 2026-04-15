@@ -208,14 +208,12 @@ func parseEtcdInitLogs(reader io.Reader) (*etcdInitLogResult, error) {
 		}
 		result.tailLines = append(result.tailLines, line)
 		lower := strings.ToLower(line)
-		if strings.Contains(lower, logRestoringSnapshot) {
-			result.restoreStarted = true
-		}
-		if strings.Contains(lower, logRestoredSnapshot) {
-			result.restoreCompleted = true
-		}
 		if strings.Contains(lower, logNotRestoringSnapshot) {
 			result.restoreSkipped = true
+		} else if strings.Contains(lower, logRestoredSnapshot) {
+			result.restoreCompleted = true
+		} else if strings.Contains(lower, logRestoringSnapshot) {
+			result.restoreStarted = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
