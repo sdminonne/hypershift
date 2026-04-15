@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -19,6 +20,24 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+const (
+	// EtcdPodName is the name of the etcd pod whose init container logs are verified.
+	EtcdPodName = "etcd-0"
+	// EtcdInitContainerName is the name of the init container in the etcd pod.
+	EtcdInitContainerName = "etcd-init"
+
+	// HCPEtcdBackupNamePrefix is the prefix used by the OADP plugin when creating
+	// HCPEtcdBackup resources. The full name follows the pattern: oadp-<BackupName>-<random>.
+	HCPEtcdBackupNamePrefix = "oadp-"
+
+	// logRestoringSnapshot is emitted by etcdutl/etcdctl when starting a snapshot restore.
+	logRestoringSnapshot = "restoring snapshot"
+	// logRestoredSnapshot is emitted by etcdutl/etcdctl when snapshot restore completes.
+	logRestoredSnapshot = "restored snapshot"
+	// logNotRestoringSnapshot indicates the restore was skipped because data already existed.
+	logNotRestoringSnapshot = "not empty, not restoring snapshot"
 )
 
 // EtcdSnapshotBackupOptions returns an OADPBackupOptions configured for etcd snapshot mode.
@@ -74,8 +93,16 @@ func EtcdSnapshotRestoreOptions(name, fromBackup, hcName, hcNamespace string) *O
 	}
 }
 
-// WaitForHCPEtcdBackupCondition waits for an HCPEtcdBackup resource with the given name
-// to have a BackupCompleted condition with the specified status.
+// MatchesHCPEtcdBackupName checks whether an HCPEtcdBackup resource name matches the
+// expected naming pattern for a given OADP backup name. The OADP plugin creates
+// HCPEtcdBackup resources with the naming pattern: oadp-<BackupName>-<random>.
+func MatchesHCPEtcdBackupName(hcpEtcdBackupName, oadpBackupName string) bool {
+	return strings.HasPrefix(hcpEtcdBackupName, HCPEtcdBackupNamePrefix+oadpBackupName)
+}
+
+// WaitForHCPEtcdBackupCondition waits for an HCPEtcdBackup resource matching the given
+// OADP backup name to have a BackupCompleted condition with the specified status.
+// HCPEtcdBackup names follow the pattern: oadp-<BackupName>-<random>.
 func WaitForHCPEtcdBackupCondition(testCtx *internal.TestContext, backupName string, expectedStatus metav1.ConditionStatus) error {
 	return wait.PollUntilContextTimeout(testCtx.Context, PollInterval, BackupTimeout, true, func(ctx context.Context) (bool, error) {
 		hcpEtcdBackupList := &hyperv1.HCPEtcdBackupList{}
@@ -84,7 +111,7 @@ func WaitForHCPEtcdBackupCondition(testCtx *internal.TestContext, backupName str
 		}
 
 		for _, backup := range hcpEtcdBackupList.Items {
-			if backup.Name != backupName {
+			if !MatchesHCPEtcdBackupName(backup.Name, backupName) {
 				continue
 			}
 			condition := meta.FindStatusCondition(backup.Status.Conditions, string(hyperv1.BackupCompleted))
@@ -97,7 +124,7 @@ func WaitForHCPEtcdBackupCondition(testCtx *internal.TestContext, backupName str
 			// If the condition is explicitly False, the backup failed - stop polling.
 			if expectedStatus == metav1.ConditionTrue && condition.Status == metav1.ConditionFalse {
 				return false, fmt.Errorf("HCPEtcdBackup %s has BackupCompleted=False: reason=%s, message=%s",
-					backupName, condition.Reason, condition.Message)
+					backup.Name, condition.Reason, condition.Message)
 			}
 			return false, nil
 		}
@@ -107,66 +134,93 @@ func WaitForHCPEtcdBackupCondition(testCtx *internal.TestContext, backupName str
 
 // VerifyEtcdInitLogs retrieves the etcd-init container logs from the etcd-0 pod in the
 // control plane namespace and verifies that they contain expected snapshot restore traces.
-// The expected log lines indicate a successful snapshot download and restore:
-//   - "snapshot downloaded successfully"
-//   - "snapshot restore succeeded" or "etcd snapshot restored successfully"
+// The expected log lines from etcdutl/etcdctl indicate a successful snapshot restore:
+//   - "restoring snapshot" (restore started)
+//   - "restored snapshot" (restore completed)
+//
+// It also checks that the restore was not skipped due to existing data:
+//   - "not empty, not restoring snapshot" must NOT be present
 func VerifyEtcdInitLogs(ctx context.Context, logger logr.Logger, kubeClient kubernetes.Interface, controlPlaneNamespace string) error {
 	podLogOpts := &corev1.PodLogOptions{
-		Container: "etcd-init",
+		Container: EtcdInitContainerName,
 	}
 
-	req := kubeClient.CoreV1().Pods(controlPlaneNamespace).GetLogs("etcd-0", podLogOpts)
+	req := kubeClient.CoreV1().Pods(controlPlaneNamespace).GetLogs(EtcdPodName, podLogOpts)
 	logStream, err := req.Stream(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to stream etcd-init container logs from etcd-0: %w", err)
+		return fmt.Errorf("failed to stream %s container logs from %s: %w", EtcdInitContainerName, EtcdPodName, err)
 	}
 	defer logStream.Close()
 
+	result, err := parseEtcdInitLogs(logStream)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("etcd-init container logs scanned", "lines", result.lineCount)
+
+	if result.restoreSkipped {
+		for _, line := range result.tailLines {
+			logger.V(1).Info("etcd-init tail", "log", line)
+		}
+		return fmt.Errorf("etcd-init logs contain '%s'; restore was skipped because data directory was not empty", logNotRestoringSnapshot)
+	}
+	if !result.restoreStarted {
+		for _, line := range result.tailLines {
+			logger.V(1).Info("etcd-init tail", "log", line)
+		}
+		return fmt.Errorf("etcd-init logs do not contain '%s'; snapshot restore may not have started", logRestoringSnapshot)
+	}
+	if !result.restoreCompleted {
+		for _, line := range result.tailLines {
+			logger.V(1).Info("etcd-init tail", "log", line)
+		}
+		return fmt.Errorf("etcd-init logs do not contain '%s'; snapshot restore may have failed", logRestoredSnapshot)
+	}
+
+	return nil
+}
+
+// etcdInitLogResult holds the results of parsing etcd-init container logs.
+type etcdInitLogResult struct {
+	restoreStarted   bool
+	restoreCompleted bool
+	restoreSkipped   bool
+	lineCount        int
+	tailLines        []string
+}
+
+// parseEtcdInitLogs scans etcd-init container log output and checks for expected
+// snapshot restore trace messages from etcdutl/etcdctl.
+func parseEtcdInitLogs(reader io.Reader) (*etcdInitLogResult, error) {
 	const tailSize = 50
 
-	var (
-		foundDownload bool
-		foundRestore  bool
-		lineCount     int
-		tailLines     []string
-	)
+	result := &etcdInitLogResult{}
 
-	scanner := bufio.NewScanner(logStream)
+	scanner := bufio.NewScanner(reader)
 	buf := make([]byte, 256*1024)
 	scanner.Buffer(buf, 512*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		lineCount++
-		if len(tailLines) == tailSize {
-			tailLines = tailLines[1:]
+		result.lineCount++
+		if len(result.tailLines) == tailSize {
+			result.tailLines = result.tailLines[1:]
 		}
-		tailLines = append(tailLines, line)
+		result.tailLines = append(result.tailLines, line)
 		lower := strings.ToLower(line)
-		if strings.Contains(lower, "snapshot downloaded successfully") {
-			foundDownload = true
+		if strings.Contains(lower, logRestoringSnapshot) {
+			result.restoreStarted = true
 		}
-		if strings.Contains(lower, "snapshot restore succeeded") || strings.Contains(lower, "etcd snapshot restored successfully") {
-			foundRestore = true
+		if strings.Contains(lower, logRestoredSnapshot) {
+			result.restoreCompleted = true
+		}
+		if strings.Contains(lower, logNotRestoringSnapshot) {
+			result.restoreSkipped = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading etcd-init logs: %w", err)
+		return nil, fmt.Errorf("error reading etcd-init logs: %w", err)
 	}
 
-	logger.Info("etcd-init container logs scanned", "lines", lineCount)
-
-	if !foundDownload {
-		for _, line := range tailLines {
-			logger.V(1).Info("etcd-init tail", "log", line)
-		}
-		return fmt.Errorf("etcd-init logs do not contain 'snapshot downloaded successfully'; snapshot download may have failed")
-	}
-	if !foundRestore {
-		for _, line := range tailLines {
-			logger.V(1).Info("etcd-init tail", "log", line)
-		}
-		return fmt.Errorf("etcd-init logs do not contain 'snapshot restore succeeded' or 'etcd snapshot restored successfully'; restore may have failed")
-	}
-
-	return nil
+	return result, nil
 }

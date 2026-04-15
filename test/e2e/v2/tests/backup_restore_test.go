@@ -18,6 +18,7 @@ package tests
 
 import (
 	"fmt"
+	"maps"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -50,6 +51,15 @@ const (
 	ContextRestore                 = "Restore"
 	ContextPostRestoreControlPlane = "PostRestoreControlPlane"
 	ContextBreakControlPlane       = "BreakControlPlane"
+)
+
+const (
+	// oadpPluginConfigMapName is the name of the ConfigMap used to configure the hypershift OADP plugin.
+	oadpPluginConfigMapName = "hypershift-oadp-plugin-config"
+	// etcdBackupMethodKey is the ConfigMap key that controls the etcd backup method.
+	etcdBackupMethodKey = "etcdBackupMethod"
+	// etcdBackupMethodSnapshot is the value for etcdBackupMethodKey to use etcd snapshots.
+	etcdBackupMethodSnapshot = "etcdSnapshot"
 )
 
 type backupRestorePlatformConfig struct {
@@ -371,7 +381,7 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		By("Configuring the hypershift-oadp-plugin-config ConfigMap")
 		cm := &corev1.ConfigMap{}
 		cmKey := types.NamespacedName{
-			Name:      "hypershift-oadp-plugin-config",
+			Name:      oadpPluginConfigMapName,
 			Namespace: backuprestore.DefaultOADPNamespace,
 		}
 		var originalData map[string]string
@@ -385,23 +395,18 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 					Namespace: cmKey.Namespace,
 				},
 				Data: map[string]string{
-					"etcdBackupMethod": "etcdSnapshot",
+					etcdBackupMethodKey: etcdBackupMethodSnapshot,
 				},
 			}
 			err = testCtx.MgmtClient.Create(testCtx.Context, cm)
 			Expect(err).NotTo(HaveOccurred())
 		} else {
 			Expect(err).NotTo(HaveOccurred())
-			if cm.Data != nil {
-				originalData = make(map[string]string, len(cm.Data))
-				for k, v := range cm.Data {
-					originalData[k] = v
-				}
-			}
+			originalData = maps.Clone(cm.Data)
 			if cm.Data == nil {
 				cm.Data = map[string]string{}
 			}
-			cm.Data["etcdBackupMethod"] = "etcdSnapshot"
+			cm.Data[etcdBackupMethodKey] = etcdBackupMethodSnapshot
 			err = testCtx.MgmtClient.Update(testCtx.Context, cm)
 			Expect(err).NotTo(HaveOccurred())
 		}
@@ -507,14 +512,14 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 
 				found := false
 				for _, backup := range hcpEtcdBackupList.Items {
-					if backup.Name == backupName && backup.Status.SnapshotURL != "" {
+					if backuprestore.MatchesHCPEtcdBackupName(backup.Name, backupName) && backup.Status.SnapshotURL != "" {
 						snapshotURL = backup.Status.SnapshotURL
 						found = true
 						GinkgoWriter.Printf("Found HCPEtcdBackup %s with snapshotURL: %s\n", backup.Name, backup.Status.SnapshotURL)
 						break
 					}
 				}
-				g.Expect(found).To(BeTrue(), fmt.Sprintf("expected HCPEtcdBackup %s to have a non-empty snapshotURL", backupName))
+				g.Expect(found).To(BeTrue(), fmt.Sprintf("expected HCPEtcdBackup matching OADP backup %s to have a non-empty snapshotURL", backupName))
 			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.BackupTimeout).Should(Succeed())
 		})
 
