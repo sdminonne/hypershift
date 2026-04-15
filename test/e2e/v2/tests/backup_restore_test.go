@@ -512,7 +512,7 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 					if backuprestore.MatchesHCPEtcdBackupName(backup.Name, backupName) && backup.Status.SnapshotURL != "" {
 						snapshotURL = backup.Status.SnapshotURL
 						found = true
-						GinkgoWriter.Printf("Found HCPEtcdBackup %s with snapshotURL: %s\n", backup.Name, backup.Status.SnapshotURL)
+						GinkgoWriter.Printf("Found HCPEtcdBackup %s with non-empty snapshotURL\n", backup.Name)
 						break
 					}
 				}
@@ -533,7 +533,7 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 				g.Expect(hostedCluster.Status.LastSuccessfulEtcdBackupURL).To(Equal(snapshotURL),
 					"expected HostedCluster lastSuccessfulEtcdBackupURL to match the snapshot created in this run")
 			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.BackupTimeout).Should(Succeed())
-			GinkgoWriter.Printf("HostedCluster lastSuccessfulEtcdBackupURL matches snapshotURL: %s\n", snapshotURL)
+			GinkgoWriter.Printf("HostedCluster lastSuccessfulEtcdBackupURL matches expected snapshotURL\n")
 		})
 	})
 
@@ -578,7 +578,7 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 				g.Expect(hostedCluster.Spec.Etcd.Managed.Storage.RestoreSnapshotURL[0]).To(Equal(snapshotURL),
 					"expected restoreSnapshotURL to match the snapshot created in this run")
 			}).WithPolling(backuprestore.PollInterval).WithTimeout(backuprestore.RestoreTimeout).Should(Succeed())
-			GinkgoWriter.Printf("RestoreSnapshotURL matches snapshotURL: %s\n", snapshotURL)
+			GinkgoWriter.Printf("RestoreSnapshotURL matches expected snapshotURL\n")
 		})
 
 		It("should have etcd-init container logs showing successful snapshot restore", func() {

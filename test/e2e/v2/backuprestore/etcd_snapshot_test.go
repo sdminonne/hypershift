@@ -108,6 +108,12 @@ func TestMatchesHCPEtcdBackupName(t *testing.T) {
 			oadpBackupName:    "mycluster-mynamespace-abc123",
 			expectedMatch:     false,
 		},
+		{
+			name:              "When HCPEtcdBackup name only shares a backup name prefix it should return false",
+			hcpEtcdBackupName: "oadp-mycluster-mynamespace-abc1234-xyz78",
+			oadpBackupName:    "mycluster-mynamespace-abc123",
+			expectedMatch:     false,
+		},
 	}
 
 	for _, tt := range tests {

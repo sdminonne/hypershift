@@ -97,7 +97,7 @@ func EtcdSnapshotRestoreOptions(name, fromBackup, hcName, hcNamespace string) *O
 // expected naming pattern for a given OADP backup name. The OADP plugin creates
 // HCPEtcdBackup resources with the naming pattern: oadp-<BackupName>-<random>.
 func MatchesHCPEtcdBackupName(hcpEtcdBackupName, oadpBackupName string) bool {
-	return strings.HasPrefix(hcpEtcdBackupName, HCPEtcdBackupNamePrefix+oadpBackupName)
+	return strings.HasPrefix(hcpEtcdBackupName, HCPEtcdBackupNamePrefix+oadpBackupName+"-")
 }
 
 // WaitForHCPEtcdBackupCondition waits for an HCPEtcdBackup resource matching the given
