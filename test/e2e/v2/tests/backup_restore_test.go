@@ -521,7 +521,9 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		})
 
 		It("should have lastSuccessfulEtcdBackupURL on HostedCluster status matching the snapshot", func() {
-			Expect(snapshotURL).NotTo(BeEmpty(), "snapshotURL must be captured from the previous spec")
+			if snapshotURL == "" {
+				Skip("snapshotURL was not captured; the snapshotURL verification spec may have failed")
+			}
 			By("Waiting for HostedCluster lastSuccessfulEtcdBackupURL to match the snapshot")
 			Eventually(func(g Gomega) {
 				hostedCluster := &hyperv1.HostedCluster{}
@@ -564,7 +566,9 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		})
 
 		It("should have restoreSnapshotURL set on HostedCluster after restore matching the snapshot", func() {
-			Expect(snapshotURL).NotTo(BeEmpty(), "snapshotURL must be captured from the backup verification spec")
+			if snapshotURL == "" {
+				Skip("snapshotURL was not captured; the snapshotURL verification spec may have failed")
+			}
 			Eventually(func(g Gomega) {
 				hostedCluster := &hyperv1.HostedCluster{}
 				err := testCtx.MgmtClient.Get(testCtx.Context, crclient.ObjectKey{
