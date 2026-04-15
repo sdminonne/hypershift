@@ -197,16 +197,23 @@ func parseEtcdInitLogs(reader io.Reader) (*etcdInitLogResult, error) {
 
 	result := &etcdInitLogResult{}
 
+	// Use a ring buffer so old strings become eligible for GC immediately
+	// instead of being retained by the underlying slice array.
+	ring := make([]string, tailSize)
+	ringIdx := 0
+	ringLen := 0
+
 	scanner := bufio.NewScanner(reader)
 	buf := make([]byte, 256*1024)
 	scanner.Buffer(buf, 512*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		result.lineCount++
-		if len(result.tailLines) == tailSize {
-			result.tailLines = result.tailLines[1:]
+		ring[ringIdx] = line
+		ringIdx = (ringIdx + 1) % tailSize
+		if ringLen < tailSize {
+			ringLen++
 		}
-		result.tailLines = append(result.tailLines, line)
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, logNotRestoringSnapshot) {
 			result.restoreSkipped = true
@@ -218,6 +225,13 @@ func parseEtcdInitLogs(reader io.Reader) (*etcdInitLogResult, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading etcd-init logs: %w", err)
+	}
+
+	// Flatten the ring buffer into chronological order.
+	result.tailLines = make([]string, ringLen)
+	start := (ringIdx - ringLen + tailSize) % tailSize
+	for i := range ringLen {
+		result.tailLines[i] = ring[(start+i)%tailSize]
 	}
 
 	return result, nil

@@ -103,7 +103,6 @@ var _ = Describe("BackupRestore", Label("backup-restore"), Ordered, Serial, func
 		prober             backuprestore.ProberManager
 		testCtx            *internal.TestContext
 		backupName         string
-		restoreName        string
 		scheduleName       string
 		expectedConditions []util.Condition
 	)
@@ -253,7 +252,7 @@ var _ = Describe("BackupRestore", Label("backup-restore"), Ordered, Serial, func
 	Context(ContextRestore, func() {
 		It("should restore from backup successfully", func() {
 			By("Creating Restore")
-			restoreName = oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
+			restoreName := oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
 			restoreOpts := &backuprestore.OADPRestoreOptions{
 				Name:              restoreName,
 				FromBackup:        backupName,
@@ -376,7 +375,6 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		platformCfg        backupRestorePlatformConfig
 		testCtx            *internal.TestContext
 		backupName         string
-		restoreName        string
 		snapshotURL        string
 		expectedConditions []util.Condition
 	)
@@ -549,7 +547,7 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 	Context(ContextRestore, func() {
 		It("should restore from backup successfully", func() {
 			By("Creating Restore with etcd snapshot options")
-			restoreName = oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
+			restoreName := oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
 			restoreOpts := backuprestore.EtcdSnapshotRestoreOptions(
 				restoreName,
 				backupName,
