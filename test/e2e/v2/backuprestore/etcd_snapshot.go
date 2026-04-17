@@ -18,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -39,59 +38,6 @@ const (
 	// logNotRestoringSnapshot indicates the restore was skipped because data already existed.
 	logNotRestoringSnapshot = "not empty, not restoring snapshot"
 )
-
-// EtcdSnapshotBackupOptions returns an OADPBackupOptions configured for etcd snapshot mode.
-// In this mode etcd is backed up via HCPEtcdBackup CRD snapshots instead of PV volume
-// snapshots. The manifest produced by the CLI differs from the default PV-based backup:
-//   - snapshotVolumes: false
-//   - snapshotMoveData: false (no dataMover, no csiSnapshotTimeout)
-//   - itemOperationTimeout: 4h0m0s
-//   - excludedResources: [] (empty)
-//   - includedResources: short-name resources without PV-related types, plus namespaces
-//
-// See https://github.com/openshift/hypershift/pull/8232 for the full CLI implementation.
-//
-// NOTE: snapshotVolumes, itemOperationTimeout, excludedResources, and the etcd-snapshot
-// resource list are handled by the --use-etcd-snapshot CLI flag (PR #8232). Until that
-// flag is available in the OADPBackupOptions struct, only SnapshotMoveData is set here.
-// TODO(jparrill): Once PR #8232 is merged and OADPBackupOptions gains a UseEtcdSnapshot
-// field, set it here and remove the explicit SnapshotMoveData override.
-func EtcdSnapshotBackupOptions(name, hcName, hcNamespace, storageLocation string) *OADPBackupOptions {
-	return &OADPBackupOptions{
-		Name:             name,
-		HCName:           hcName,
-		HCNamespace:      hcNamespace,
-		StorageLocation:  storageLocation,
-		SnapshotMoveData: ptr.To(false),
-	}
-}
-
-// EtcdSnapshotRestoreOptions returns an OADPRestoreOptions configured for etcd snapshot mode.
-// In this mode the restore manifest differs from the default PV-based restore:
-//   - restorePVs: false
-//   - cleanupBeforeRestore: CleanupRestored
-//   - veleroManagedClustersBackupName / veleroCredentialsBackupName / veleroResourcesBackupName
-//     are all set to the backup name
-//   - excludedResources omits csinodes, volumeattachments, and backuprepositories
-//     (keeping only nodes, events, events.events.k8s.io, backups/restores/resticrepositories.velero.io)
-//
-// See https://github.com/openshift/hypershift/pull/8232 for the full CLI implementation.
-//
-// NOTE: cleanupBeforeRestore, velero*BackupName fields, and the reduced excludedResources
-// list are handled by the --use-etcd-snapshot CLI flag (PR #8232). Until that flag is
-// available in the OADPRestoreOptions struct, only RestorePVs and PreserveNodePorts are set.
-// TODO(jparrill): Once PR #8232 is merged and OADPRestoreOptions gains a UseEtcdSnapshot
-// field, set it here and remove the explicit RestorePVs/PreserveNodePorts overrides.
-func EtcdSnapshotRestoreOptions(name, fromBackup, hcName, hcNamespace string) *OADPRestoreOptions {
-	return &OADPRestoreOptions{
-		Name:              name,
-		FromBackup:        fromBackup,
-		HCName:            hcName,
-		HCNamespace:       hcNamespace,
-		RestorePVs:        ptr.To(false),
-		PreserveNodePorts: ptr.To(true),
-	}
-}
 
 // MatchesHCPEtcdBackupName checks whether an HCPEtcdBackup resource name matches the
 // expected naming pattern for a given OADP backup name. The OADP plugin creates

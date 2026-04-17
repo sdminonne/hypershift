@@ -475,12 +475,13 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 				testCtx.ClusterName,
 				testCtx.ClusterNamespace,
 			)
-			backupOpts := backuprestore.EtcdSnapshotBackupOptions(
-				backupName,
-				testCtx.ClusterName,
-				testCtx.ClusterNamespace,
-				testCtx.ClusterName,
-			)
+			backupOpts := &backuprestore.OADPBackupOptions{
+				Name:            backupName,
+				HCName:          testCtx.ClusterName,
+				HCNamespace:     testCtx.ClusterNamespace,
+				StorageLocation: testCtx.ClusterName,
+				UseEtcdSnapshot: true,
+			}
 			err := backuprestore.RunOADPBackup(testCtx.Context, GinkgoLogr.WithName("backup-restore"), testCtx.ArtifactDir, backupOpts)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -548,12 +549,13 @@ var _ = Describe("BackupRestoreEtcdSnapshot", Label("backup-restore", "etcd-snap
 		It("should restore from backup successfully", func() {
 			By("Creating Restore with etcd snapshot options")
 			restoreName := oadp.GenerateRestoreName(testCtx.ClusterName, testCtx.ClusterNamespace)
-			restoreOpts := backuprestore.EtcdSnapshotRestoreOptions(
-				restoreName,
-				backupName,
-				testCtx.ClusterName,
-				testCtx.ClusterNamespace,
-			)
+			restoreOpts := &backuprestore.OADPRestoreOptions{
+				Name:            restoreName,
+				FromBackup:      backupName,
+				HCName:          testCtx.ClusterName,
+				HCNamespace:     testCtx.ClusterNamespace,
+				UseEtcdSnapshot: true,
+			}
 			executeRestore(testCtx, restoreOpts, platformCfg.postRestoreHook)
 		})
 	})
