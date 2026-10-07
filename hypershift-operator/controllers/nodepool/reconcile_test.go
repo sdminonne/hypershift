@@ -91,7 +91,7 @@ func TestReconcile(t *testing.T) {
 		_, err = r.Reconcile(t.Context(), request)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(c.Get(t.Context(), client.ObjectKeyFromObject(md), md)).To(Succeed())
-		g.Expect(md.Annotations).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=amd64,topology.kubernetes.io/zone=eu-central-1b,workload=testworkload"))
-		g.Expect(md.Annotations).To(HaveKeyWithValue(taintsKey, "dedicated=test:NoSchedule"))
+		g.Expect(md.Annotations).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=amd64,topology.kubernetes.io/zone=eu-central-1b,workload=workload"))
+		g.Expect(md.Annotations).To(HaveKeyWithValue(taintsKey, "dedicated=workload:NoSchedule"))
 	})
 }

@@ -133,8 +133,8 @@ func TestReconcileScaleFromZeroAnnotations(t *testing.T) {
 				g.Expect(actual.GetAnnotations()).To(Equal(object.GetAnnotations()))
 				return
 			}
-			g.Expect(actual.GetAnnotations()).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=arm64,topology.kubernetes.io/zone=eu-central-1b,workload=testworkload"))
-			g.Expect(actual.GetAnnotations()).To(HaveKeyWithValue(taintsKey, "dedicated=test:NoSchedule"))
+			g.Expect(actual.GetAnnotations()).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=arm64,topology.kubernetes.io/zone=eu-central-1b,workload=workload"))
+			g.Expect(actual.GetAnnotations()).To(HaveKeyWithValue(taintsKey, "dedicated=workload:NoSchedule"))
 			g.Expect(actual.GetAnnotations()).To(HaveKeyWithValue("custom.io/keep", "preserved"))
 			if !tc.noNativeCapacity {
 				for _, key := range []string{cpuKey, memoryKey, gpuKey} {
@@ -292,8 +292,8 @@ func TestSetScaleFromZeroAnnotationsOnObject(t *testing.T) {
 				NodeInfo: &capiazure.NodeInfo{Architecture: capiazure.ArchitectureArm64},
 			}},
 			validate: func(g Gomega, md *capiv1.MachineDeployment) {
-				g.Expect(md.Annotations).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=arm64,workload=testworkload"))
-				g.Expect(md.Annotations).To(HaveKeyWithValue(taintsKey, "dedicated=test:NoSchedule"))
+				g.Expect(md.Annotations).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=arm64,workload=workload"))
+				g.Expect(md.Annotations).To(HaveKeyWithValue(taintsKey, "dedicated=workload:NoSchedule"))
 			},
 		},
 		{
@@ -377,8 +377,8 @@ func TestSetScaleFromZeroAnnotationsOnObject(t *testing.T) {
 				for _, k := range []string{cpuKey, memoryKey, gpuKey} {
 					g.Expect(a).ToNot(HaveKey(k))
 				}
-				g.Expect(a).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=amd64,topology.kubernetes.io/zone=eu-central-1b,workload=testworkload"))
-				g.Expect(a).To(HaveKeyWithValue(taintsKey, "dedicated=test:NoSchedule"))
+				g.Expect(a).To(HaveKeyWithValue(labelsKey, "kubernetes.io/arch=amd64,topology.kubernetes.io/zone=eu-central-1b,workload=workload"))
+				g.Expect(a).To(HaveKeyWithValue(taintsKey, "dedicated=workload:NoSchedule"))
 				g.Expect(a).To(HaveKeyWithValue("custom.io/keep", "preserved"))
 			},
 		},
