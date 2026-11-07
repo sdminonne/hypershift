@@ -370,6 +370,9 @@ func diagnosePodsBySelector(ctx context.Context, c client.Client, namespace stri
 
 	for i := range podList.Items {
 		pod := &podList.Items[i]
+		if pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
 
 		// Check for scheduling failures.
 		for _, cond := range pod.Status.Conditions {

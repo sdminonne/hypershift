@@ -325,6 +325,112 @@ func TestDiagnosePodFailure(t *testing.T) {
 			expectedReason: hyperv1.ReasonCrashLoopBackOff,
 			expectedMsg:    "...",
 		},
+		{
+			name: "When a terminating pod has a failure, it should be skipped in favor of active pods",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: componentName, Namespace: namespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": componentName},
+					},
+					Replicas: ptr.To[int32](1),
+				},
+			},
+			pods: []*corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              componentName + "-aaa-terminating",
+						Namespace:         namespace,
+						Labels:            map[string]string{"app": componentName},
+						DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
+						Finalizers:        []string{"test-finalizer"},
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "main",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{
+										Reason: "CrashLoopBackOff",
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      componentName + "-zzz-active",
+						Namespace: namespace,
+						Labels:    map[string]string{"app": componentName},
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "main",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{
+										Reason: "ImagePullBackOff",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedReason: hyperv1.ReasonImagePullBackOff,
+			expectedMsg:    "Pod test-component-zzz-active container main: ImagePullBackOff",
+		},
+		{
+			name: "When completed or failed pods exist, they should be skipped",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: componentName, Namespace: namespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": componentName},
+					},
+					Replicas: ptr.To[int32](1),
+				},
+			},
+			pods: []*corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      componentName + "-aaa-failed",
+						Namespace: namespace,
+						Labels:    map[string]string{"app": componentName},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodFailed,
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "main",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{
+										Reason: "CrashLoopBackOff",
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      componentName + "-bbb-succeeded",
+						Namespace: namespace,
+						Labels:    map[string]string{"app": componentName},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodSucceeded,
+					},
+				},
+			},
+			expectedReason: "",
+			expectedMsg:    "",
+		},
 	}
 
 	for _, tc := range testCases {
