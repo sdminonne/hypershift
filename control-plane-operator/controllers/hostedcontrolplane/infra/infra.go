@@ -27,6 +27,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -227,9 +229,18 @@ func (r *Reconciler) AdmitHCPManagedRoutes(ctx context.Context, hcp *hyperv1.Hos
 // returns a list of route names that are not admitted. A route is considered
 // not admitted if it has no .status.ingress entries, or if the Admitted
 // condition on any ingress entry is not True.
+// When no service uses the Route publishing strategy, or when the Route CRD is
+// not installed on the management cluster, it returns nil, nil.
 func (r *Reconciler) CheckRouteAdmission(ctx context.Context, hcp *hyperv1.HostedControlPlane) (notAdmittedRoutes []string, err error) {
+	if !hasRoutePublishingStrategy(hcp) {
+		return nil, nil
+	}
+
 	routeList := &routev1.RouteList{}
 	if err := r.Client.List(ctx, routeList, client.InNamespace(hcp.Namespace)); err != nil {
+		if meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to list routes: %w", err)
 	}
 
@@ -243,6 +254,15 @@ func (r *Reconciler) CheckRouteAdmission(ctx context.Context, hcp *hyperv1.Hoste
 		}
 	}
 	return notAdmittedRoutes, nil
+}
+
+func hasRoutePublishingStrategy(hcp *hyperv1.HostedControlPlane) bool {
+	for _, svc := range hcp.Spec.Services {
+		if svc.ServicePublishingStrategy.Type == hyperv1.Route {
+			return true
+		}
+	}
+	return false
 }
 
 // routeIsAdmitted returns true if the route has at least one ingress entry
