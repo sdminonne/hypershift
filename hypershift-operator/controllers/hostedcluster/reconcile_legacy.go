@@ -644,6 +644,9 @@ func (r *HostedClusterReconciler) reconcileLegacy(ctx context.Context, req ctrl.
 		}
 	}
 
+	// Set ManagementClusterResourcePressure condition based on pod scheduling failures.
+	reconcileManagementClusterResourcePressure(ctx, r.Client, hcluster, controlPlaneNamespace.Name)
+
 	// Copy AWSEndpointAvailable and AWSEndpointServiceAvailable conditions from the AWSEndpointServices.
 	if hcluster.Spec.Platform.Type == hyperv1.AWSPlatform {
 		hcpNamespace := pkgmanifests.HostedControlPlaneNamespace(hcluster.Namespace, hcluster.Name)
