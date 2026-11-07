@@ -2409,6 +2409,26 @@ func TestCheckRouteAdmission(t *testing.T) {
 		},
 	}
 
+	unlabeledUnadmittedRoute := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "konnectivity-server",
+			Namespace: testNamespace,
+		},
+		Status: routev1.RouteStatus{
+			Ingress: []routev1.RouteIngress{
+				{
+					Conditions: []routev1.RouteIngressCondition{
+						{
+							Type:   routev1.RouteAdmitted,
+							Status: corev1.ConditionFalse,
+							Reason: "HostAlreadyClaimed",
+						},
+					},
+				},
+			},
+		},
+	}
+
 	testCases := []struct {
 		name               string
 		hcp                *hyperv1.HostedControlPlane
@@ -2419,7 +2439,7 @@ func TestCheckRouteAdmission(t *testing.T) {
 		expectError        bool
 	}{
 		{
-			name:               "When all HCP-managed routes are admitted, it should return no unadmitted routes",
+			name:               "When all routes are admitted, it should return no unadmitted routes",
 			hcp:                withServices(baseAWSHCP(), allServicesRouteWithHostnames()),
 			objects:            []client.Object{admittedRoute},
 			expectedUnadmitted: nil,
@@ -2429,6 +2449,12 @@ func TestCheckRouteAdmission(t *testing.T) {
 			hcp:                withServices(baseAWSHCP(), allServicesRouteWithHostnames()),
 			objects:            []client.Object{admittedRoute, unadmittedRoute},
 			expectedUnadmitted: []string{"oauth"},
+		},
+		{
+			name:               "When a default-router route without HCPRouteLabel is rejected, it should return the route name in sorted order",
+			hcp:                withServices(baseAWSHCP(), kasServiceLoadBalancerOthersRoute()),
+			objects:            []client.Object{unadmittedRoute, unlabeledUnadmittedRoute},
+			expectedUnadmitted: []string{"konnectivity-server", "oauth"},
 		},
 		{
 			name: "When no service uses Route publishing strategy, it should skip route listing and succeed without Route CRD",
@@ -2502,6 +2528,82 @@ func TestCheckRouteAdmission(t *testing.T) {
 			}
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(notAdmitted).To(Equal(tc.expectedUnadmitted))
+		})
+	}
+}
+
+func TestReconcileInfrastructureStatus(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                     string
+		hcp                      *hyperv1.HostedControlPlane
+		provisionRouterLB        bool
+		provisionKASLB           bool
+		expectedRouteNotAdmitted bool
+		expectedRouteMsgContains string
+	}{
+		{
+			name: "When router LoadBalancer is still provisioning, it should not report RouteNotAdmitted",
+			hcp: withServices(
+				withAWSEndpointAccess(baseAWSHCP(), hyperv1.Public),
+				allServicesRouteWithHostnames(),
+			),
+			provisionRouterLB:        false,
+			expectedRouteNotAdmitted: false,
+		},
+		{
+			name: "When KAS LoadBalancer is still provisioning, it should not report RouteNotAdmitted",
+			hcp: withServices(
+				withAWSEndpointAccess(baseAWSHCP(), hyperv1.Public),
+				kasServiceLoadBalancerOthersRoute(),
+			),
+			provisionKASLB:           false,
+			expectedRouteNotAdmitted: false,
+		},
+		{
+			name: "When LoadBalancer is provisioned and routes are not admitted, it should report RouteNotAdmitted",
+			hcp: withServices(
+				withAWSEndpointAccess(baseAWSHCP(), hyperv1.Public),
+				kasServiceLoadBalancerOthersRoute(),
+			),
+			provisionKASLB:           true,
+			expectedRouteNotAdmitted: true,
+			expectedRouteMsgContains: "Routes not admitted: konnectivity-server, oauth",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewGomegaWithT(t)
+			ctx := t.Context()
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(api.Scheme).
+				WithIndex(&corev1.Event{}, events.EventInvolvedObjectUIDField, func(obj client.Object) []string {
+					return []string{string(obj.(*corev1.Event).InvolvedObject.UID)}
+				}).
+				Build()
+
+			r := NewReconciler(fakeClient, testIngressDomain)
+			g.Expect(r.ReconcileInfrastructure(ctx, tc.hcp, upsert.New(false).CreateOrUpdate)).To(Succeed())
+
+			if tc.provisionRouterLB {
+				g.Expect(simulateLBServiceProvisioned(ctx, fakeClient, cpomanifests.RouterPublicService(testNamespace), "router.test.elb.amazonaws.com")).To(Succeed())
+			}
+			if tc.provisionKASLB {
+				g.Expect(simulateLBServiceProvisioned(ctx, fakeClient, cpomanifests.KubeAPIServerService(testNamespace), "kas.test.elb.amazonaws.com")).To(Succeed())
+			}
+
+			status, err := r.ReconcileInfrastructureStatus(ctx, tc.hcp)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(status.RouteNotAdmitted).To(Equal(tc.expectedRouteNotAdmitted))
+			if tc.expectedRouteMsgContains != "" {
+				g.Expect(status.RouteNotAdmittedMsg).To(ContainSubstring(tc.expectedRouteMsgContains))
+			} else {
+				g.Expect(status.RouteNotAdmittedMsg).To(BeEmpty())
+			}
 		})
 	}
 }
