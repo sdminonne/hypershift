@@ -4704,7 +4704,7 @@ func TestReconcileInfrastructureStatusCondition(t *testing.T) {
 			expectedCondReason: hyperv1.WaitingOnInfrastructureReadyReason,
 		},
 		{
-			name: "When route is not admitted, it should set InfrastructureReady with RouteNotAdmitted reason",
+			name: "When route is not admitted and hosts are empty, it should set InfrastructureReady with RouteNotAdmitted reason",
 			hcp: &hyperv1.HostedControlPlane{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-hcp",
@@ -4717,6 +4717,29 @@ func TestReconcileInfrastructureStatusCondition(t *testing.T) {
 				APIPort:             0,
 				RouteNotAdmitted:    true,
 				RouteNotAdmittedMsg: "Routes not admitted: kube-apiserver-external",
+			},
+			expectedCondStatus: metav1.ConditionFalse,
+			expectedCondReason: hyperv1.ReasonRouteNotAdmitted,
+		},
+		{
+			name: "When all hosts are populated but a route is not admitted, it should set InfrastructureReady to False with RouteNotAdmitted reason",
+			hcp: &hyperv1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-hcp",
+					Namespace:  testNamespace,
+					Generation: 8,
+				},
+			},
+			infraStatus: infra.InfrastructureStatus{
+				APIHost:             "api.example.com",
+				APIPort:             6443,
+				KonnectivityHost:    "konnectivity.example.com",
+				KonnectivityPort:    8091,
+				OAuthEnabled:        true,
+				OAuthHost:           "oauth.example.com",
+				OAuthPort:           443,
+				RouteNotAdmitted:    true,
+				RouteNotAdmittedMsg: "Routes not admitted: oauth",
 			},
 			expectedCondStatus: metav1.ConditionFalse,
 			expectedCondReason: hyperv1.ReasonRouteNotAdmitted,

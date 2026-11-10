@@ -857,16 +857,33 @@ func (r *HostedControlPlaneReconciler) reconcileInfrastructureStatusCondition(ct
 			Host: infraStatus.APIHost,
 			Port: infraStatus.APIPort,
 		}
-		newCondition = metav1.Condition{
-			Type:    string(hyperv1.InfrastructureReady),
-			Status:  metav1.ConditionTrue,
-			Message: hyperv1.AllIsWellMessage,
-			Reason:  hyperv1.AsExpectedReason,
-		}
 		if reconcilerpolicy.HCPOAuthEnabled(hostedControlPlane) {
 			// JoinHostPort brackets IPv6 literals so url.Parse accepts the callback template.
 			hostedControlPlane.Status.OAuthCallbackURLTemplate = fmt.Sprintf("https://%s/oauth2callback/[identity-provider-name]",
 				net.JoinHostPort(infraStatus.OAuthHost, strconv.Itoa(int(infraStatus.OAuthPort))))
+		}
+		if infraStatus.RouteNotAdmitted {
+			message := "Cluster infrastructure is still provisioning"
+			if len(infraStatus.Message) > 0 {
+				message = infraStatus.Message
+			}
+			if infraStatus.RouteNotAdmittedMsg != "" {
+				message = message + "; " + infraStatus.RouteNotAdmittedMsg
+			}
+			newCondition = metav1.Condition{
+				Type:    string(hyperv1.InfrastructureReady),
+				Status:  metav1.ConditionFalse,
+				Reason:  hyperv1.ReasonRouteNotAdmitted,
+				Message: message,
+			}
+			r.Log.Info("Infrastructure is not yet ready")
+		} else {
+			newCondition = metav1.Condition{
+				Type:    string(hyperv1.InfrastructureReady),
+				Status:  metav1.ConditionTrue,
+				Message: hyperv1.AllIsWellMessage,
+				Reason:  hyperv1.AsExpectedReason,
+			}
 		}
 	} else {
 		message := "Cluster infrastructure is still provisioning"
