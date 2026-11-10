@@ -338,6 +338,9 @@ func diagnosePodFailure(cpContext ControlPlaneContext, componentName string) (st
 	// Look up the workload (Deployment or StatefulSet) to get its label selector.
 	deployment := &appsv1.Deployment{}
 	if err := cpContext.Client.Get(ctx, client.ObjectKey{Namespace: cpContext.HCP.Namespace, Name: componentName}, deployment); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", ""
+		}
 		// Try StatefulSet
 		sts := &appsv1.StatefulSet{}
 		if stsErr := cpContext.Client.Get(ctx, client.ObjectKey{Namespace: cpContext.HCP.Namespace, Name: componentName}, sts); stsErr != nil {
