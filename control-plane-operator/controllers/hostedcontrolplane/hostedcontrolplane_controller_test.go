@@ -5060,8 +5060,7 @@ func TestReconcileAvailabilityAndReadyStatus(t *testing.T) {
 				Log:    zapr.NewLogger(zaptest.NewLogger(t)),
 			}
 
-			componentsMsg, componentsErr := r.controlPlaneComponentsAvailable(t.Context(), tc.hcp)
-			r.reconcileAvailabilityAndReadyStatus(t.Context(), tc.hcp, componentsMsg, componentsErr)
+			r.reconcileAvailabilityAndReadyStatus(t.Context(), tc.hcp)
 
 			g.Expect(tc.hcp.Status.Ready).To(Equal(tc.expectedReady))
 

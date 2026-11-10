@@ -747,10 +747,7 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	r.reconcileInfrastructureStatusCondition(ctx, hostedControlPlane)
 	r.reconcileExternalDNSStatusCondition(ctx, hostedControlPlane)
-
-	// Compute CPC availability once for availability status reporting.
-	componentsMsg, componentsErr := r.controlPlaneComponentsAvailable(ctx, hostedControlPlane)
-	r.reconcileAvailabilityAndReadyStatus(ctx, hostedControlPlane, componentsMsg, componentsErr)
+	r.reconcileAvailabilityAndReadyStatus(ctx, hostedControlPlane)
 
 	// Admin Kubeconfig
 	kubeconfig := manifests.KASAdminKubeconfigSecret(hostedControlPlane.Namespace, hostedControlPlane.Spec.KubeConfig)
@@ -945,18 +942,15 @@ func (r *HostedControlPlaneReconciler) reconcileExternalDNSStatusCondition(ctx c
 	meta.SetStatusCondition(&hostedControlPlane.Status.Conditions, newCondition)
 }
 
-func (r *HostedControlPlaneReconciler) reconcileAvailabilityAndReadyStatus(ctx context.Context, hostedControlPlane *hyperv1.HostedControlPlane, componentsMsg string, componentsErr error) {
+func (r *HostedControlPlaneReconciler) reconcileAvailabilityAndReadyStatus(ctx context.Context, hostedControlPlane *hyperv1.HostedControlPlane) {
 	healthCheckErr := r.healthCheckKASLoadBalancers(ctx, hostedControlPlane)
 
-	componentsNotAvailableMsg := componentsMsg
-	effectiveComponentsErr := componentsErr
+	var componentsNotAvailableMsg string
+	var componentsErr error
 	availableCondition := meta.FindStatusCondition(hostedControlPlane.Status.Conditions, string(hyperv1.HostedControlPlaneAvailable))
 	alreadyAvailable := availableCondition != nil && availableCondition.Status == metav1.ConditionTrue
-	if alreadyAvailable && healthCheckErr == nil {
-		// When already available and health check passes, skip component check
-		// to avoid unnecessary status churn.
-		componentsNotAvailableMsg = ""
-		effectiveComponentsErr = nil
+	if !alreadyAvailable || healthCheckErr != nil {
+		componentsNotAvailableMsg, componentsErr = r.controlPlaneComponentsAvailable(ctx, hostedControlPlane)
 	}
 
 	ready, condition := reconcileAvailabilityStatus(
@@ -964,7 +958,7 @@ func (r *HostedControlPlaneReconciler) reconcileAvailabilityAndReadyStatus(ctx c
 		hostedControlPlane.Status.KubeConfig != nil,
 		healthCheckErr,
 		componentsNotAvailableMsg,
-		effectiveComponentsErr,
+		componentsErr,
 		hostedControlPlane.Generation,
 	)
 	hostedControlPlane.Status.Ready = ready
