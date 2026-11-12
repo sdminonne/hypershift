@@ -9,6 +9,7 @@ import (
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/support/awsapi"
 	supportawsutil "github.com/openshift/hypershift/support/awsutil"
+	"github.com/openshift/hypershift/support/diagnostics"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/smithy-go"
@@ -32,9 +33,15 @@ func awsHealthCheckIdentityProvider(ctx context.Context, hcp *hyperv1.HostedCont
 		return nil
 	}
 
+	// Extract role ARN for diagnostic enrichment.
+	var roleARN string
+	if hcp.Spec.Platform.AWS != nil {
+		roleARN = hcp.Spec.Platform.AWS.RolesRef.ControlPlaneOperatorARN
+	}
+
 	// We try to interact with cloud provider to validate it is operational.
 	if _, err := ec2Client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{}); err != nil {
-		status, reason, message := classifyIdentityProviderError(err)
+		status, reason, message := classifyIdentityProviderError(err, roleARN)
 		condition := metav1.Condition{
 			Type:               string(hyperv1.ValidAWSIdentityProvider),
 			ObservedGeneration: hcp.Generation,
@@ -81,6 +88,9 @@ var requestIDPattern = regexp.MustCompile(`,?\s*(?:RequestID|HostID): [^\s,]+`)
 // classifyIdentityProviderError inspects an error from an AWS API call and
 // returns the condition (status, reason, message) for ValidAWSIdentityProvider.
 //
+// When roleARN is non-empty and the error is a terminal STS auth failure,
+// the role ARN is prepended to the message for diagnostic context (Case 3.1).
+//
 // After the migration to AWS SDK v2, credential errors from
 // WebIdentityRoleProvider.Retrieve are wrapped with plain fmt.Errorf — no
 // smithy.APIError with code "WebIdentityErr" is produced. This function uses
@@ -89,13 +99,18 @@ var requestIDPattern = regexp.MustCompile(`,?\s*(?:RequestID|HostID): [^\s,]+`)
 // The RequestID lives in the ResponseError wrapper, not in GenericAPIError's
 // ErrorCode()/ErrorMessage(), so using the structured fields produces a stable
 // condition message that won't cause reconciliation loops.
-func classifyIdentityProviderError(err error) (metav1.ConditionStatus, string, string) {
+func classifyIdentityProviderError(err error, roleARN string) (metav1.ConditionStatus, string, string) {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		code := apiErr.ErrorCode()
 		if stsAuthErrorCodes.Has(code) {
-			return metav1.ConditionFalse, hyperv1.InvalidIdentityProvider,
-				fmt.Sprintf("AWS identity provider validation failed: %s: %s", code, apiErr.ErrorMessage())
+			msg := fmt.Sprintf("AWS identity provider validation failed: %s: %s", code, apiErr.ErrorMessage())
+			if roleARN != "" {
+				msg = fmt.Sprintf("Role %s: %s", roleARN, msg)
+			} else {
+				diagnostics.RecordFallback("aws", "ValidAWSIdentityProvider", "3.1")
+			}
+			return metav1.ConditionFalse, hyperv1.InvalidIdentityProvider, msg
 		}
 		// Any other AWS API error (throttling, InvalidIdentityToken, ...) can't
 		// prove the provider is invalid.
