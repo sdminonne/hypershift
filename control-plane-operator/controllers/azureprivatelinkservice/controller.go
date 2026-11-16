@@ -10,6 +10,7 @@ import (
 	cpomanifests "github.com/openshift/hypershift/pkg/manifests/cpo"
 	"github.com/openshift/hypershift/support/azureutil"
 	"github.com/openshift/hypershift/support/config"
+	"github.com/openshift/hypershift/support/diagnostics"
 	"github.com/openshift/hypershift/support/k8sutil"
 	"github.com/openshift/hypershift/support/netutil"
 
@@ -1027,9 +1028,10 @@ func hcpExternalPrivateServices(hcp *hyperv1.HostedControlPlane) []externalPriva
 // It delegates to azureutil.ClassifyAzureError for error classification and
 // requeue interval selection, then updates the CR status condition.
 func (r *AzurePrivateLinkServiceReconciler) handleAzureError(ctx context.Context, azPLS *hyperv1.AzurePrivateLinkService, conditionType string, reason string, err error, log logr.Logger) (ctrl.Result, error) {
-	requeueAfter, message := azureutil.ClassifyAzureError(err)
+	requeueAfter, message, errorCode := azureutil.ClassifyAzureError(err)
 	log.Error(err, message)
 
+	diagnostics.RecordPlatformFailure(ctx, conditionType, reason, errorCode)
 	patch := client.MergeFrom(azPLS.DeepCopy())
 	meta.SetStatusCondition(&azPLS.Status.Conditions, metav1.Condition{
 		Type:               conditionType,
