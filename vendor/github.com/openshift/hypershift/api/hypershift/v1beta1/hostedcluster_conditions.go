@@ -492,12 +492,12 @@ const (
 	ReEncryptionFailedReason        = "ReEncryptionFailed"
 	ReEncryptionWaitingForKASReason = "ReEncryptionWaitingForKASConvergence"
 
-	PodSchedulingFailedReason              = "PodSchedulingFailed"
-	CrashLoopBackOffReason                 = "CrashLoopBackOff"
-	ImagePullBackOffReason                 = "ImagePullBackOff"
-	RouteNotAdmittedReason                 = "RouteNotAdmitted"
-	ControlPlanePodStatusUnavailableReason = "ControlPlanePodStatusUnavailable"
-	NoPressureReason                       = "NoPressure"
+	ReasonPodSchedulingFailed              = "PodSchedulingFailed"
+	ReasonCrashLoopBackOff                 = "CrashLoopBackOff"
+	ReasonImagePullBackOff                 = "ImagePullBackOff"
+	ReasonRouteNotAdmitted                 = "RouteNotAdmitted"
+	ReasonControlPlanePodStatusUnavailable = "ControlPlanePodStatusUnavailable"
+	ReasonNoPressure                       = "NoPressure"
 )
 
 // Messages.
