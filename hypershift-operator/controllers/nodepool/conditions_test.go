@@ -1453,3 +1453,158 @@ func TestReachedIgnitionEndpointCondition(t *testing.T) {
 		})
 	}
 }
+
+func TestIgnitionNotReachedMessage(t *testing.T) {
+	tests := []struct {
+		name         string
+		platformType hyperv1.PlatformType
+		wantContains string
+	}{
+		{
+			name:         "AWS platform includes security group and NACL hints",
+			platformType: hyperv1.AWSPlatform,
+			wantContains: "security group",
+		},
+		{
+			name:         "Azure platform includes NSG and Private Link hints",
+			platformType: hyperv1.AzurePlatform,
+			wantContains: "NSG rules",
+		},
+		{
+			name:         "Unknown platform returns generic message",
+			platformType: hyperv1.NonePlatform,
+			wantContains: "Nodes have not reached the ignition endpoint.",
+		},
+		{
+			name:         "KubeVirt platform returns generic message",
+			platformType: hyperv1.KubevirtPlatform,
+			wantContains: "Nodes have not reached the ignition endpoint.",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			msg := ignitionNotReachedMessage(tc.platformType)
+			g.Expect(msg).To(ContainSubstring(tc.wantContains))
+			g.Expect(msg).To(ContainSubstring("Nodes have not reached the ignition endpoint"))
+		})
+	}
+}
+
+func TestNodeConnectivityHint(t *testing.T) {
+	tests := []struct {
+		name         string
+		platformType hyperv1.PlatformType
+		wantContains string
+		wantEmpty    bool
+	}{
+		{
+			name:         "AWS platform includes port 6443 and NACL hints",
+			platformType: hyperv1.AWSPlatform,
+			wantContains: "port 6443",
+		},
+		{
+			name:         "Azure platform includes NSG and Private Link hints",
+			platformType: hyperv1.AzurePlatform,
+			wantContains: "NSG rules",
+		},
+		{
+			name:         "Unknown platform returns empty string",
+			platformType: hyperv1.NonePlatform,
+			wantEmpty:    true,
+		},
+		{
+			name:         "KubeVirt platform returns empty string",
+			platformType: hyperv1.KubevirtPlatform,
+			wantEmpty:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			hint := nodeConnectivityHint(tc.platformType)
+			if tc.wantEmpty {
+				g.Expect(hint).To(BeEmpty())
+			} else {
+				g.Expect(hint).To(ContainSubstring(tc.wantContains))
+			}
+		})
+	}
+}
+
+func TestSetAllNodesHealthyConditionWithConnectivityHint(t *testing.T) {
+	g := NewWithT(t)
+
+	nodePool := &hyperv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-nodepool",
+			Namespace:  "test-ns",
+			Generation: 1,
+		},
+		Spec: hyperv1.NodePoolSpec{
+			Platform: hyperv1.NodePoolPlatform{
+				Type: hyperv1.AWSPlatform,
+			},
+			Replicas: ptr.To[int32](1),
+		},
+	}
+
+	// Machine without NodeHealthy condition — triggers WaitingForNodeRef.
+	machines := []*v1beta2.Machine{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine-1",
+			},
+			Status: v1beta2.MachineStatus{
+				// No conditions — will be treated as WaitingForNodeRef.
+			},
+		},
+	}
+
+	r := &NodePoolReconciler{}
+	r.setAllNodesHealthyCondition(nodePool, machines)
+
+	condition := FindStatusCondition(nodePool.Status.Conditions, hyperv1.NodePoolAllNodesHealthyConditionType)
+	g.Expect(condition).NotTo(BeNil())
+	g.Expect(condition.Status).To(Equal(corev1.ConditionFalse))
+	g.Expect(condition.Message).To(ContainSubstring("port 6443"))
+	g.Expect(condition.Message).To(ContainSubstring("Nodes may be unable to reach the API server"))
+}
+
+func TestSetAllNodesHealthyConditionNoHintForNonAWS(t *testing.T) {
+	g := NewWithT(t)
+
+	nodePool := &hyperv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-nodepool",
+			Namespace:  "test-ns",
+			Generation: 1,
+		},
+		Spec: hyperv1.NodePoolSpec{
+			Platform: hyperv1.NodePoolPlatform{
+				Type: hyperv1.KubevirtPlatform,
+			},
+			Replicas: ptr.To[int32](1),
+		},
+	}
+
+	machines := []*v1beta2.Machine{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine-1",
+			},
+			Status: v1beta2.MachineStatus{},
+		},
+	}
+
+	r := &NodePoolReconciler{}
+	r.setAllNodesHealthyCondition(nodePool, machines)
+
+	condition := FindStatusCondition(nodePool.Status.Conditions, hyperv1.NodePoolAllNodesHealthyConditionType)
+	g.Expect(condition).NotTo(BeNil())
+	g.Expect(condition.Status).To(Equal(corev1.ConditionFalse))
+	// KubeVirt platform should NOT have a connectivity hint.
+	g.Expect(condition.Message).NotTo(ContainSubstring("Nodes may be unable to reach the API server"))
+}

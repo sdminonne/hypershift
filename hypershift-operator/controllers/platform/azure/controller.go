@@ -35,6 +35,7 @@ import (
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/support/azureutil"
+	"github.com/openshift/hypershift/support/diagnostics"
 	"github.com/openshift/hypershift/support/k8sutil"
 	"github.com/openshift/hypershift/support/reconcilerpolicy"
 
@@ -735,11 +736,12 @@ func (r *AzurePrivateLinkServiceController) rejectPrivateEndpointConnections(ctx
 func (r *AzurePrivateLinkServiceController) handleAzureError(ctx context.Context, azPLS *hyperv1.AzurePrivateLinkService, reason string, err error) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("azureprivatelinkservice", azPLS.Name, "namespace", azPLS.Namespace)
 
-	requeueAfter, message := azureutil.ClassifyAzureError(err)
+	requeueAfter, message, errorCode := azureutil.ClassifyAzureError(err)
 	log.Error(err, message)
 
 	patch := client.MergeFrom(azPLS.DeepCopy())
 	for _, t := range []hyperv1.ConditionType{hyperv1.AzurePLSCreated, hyperv1.AzurePrivateLinkServiceAvailable} {
+		diagnostics.RecordPlatformFailure(ctx, string(t), reason, errorCode)
 		meta.SetStatusCondition(&azPLS.Status.Conditions, metav1.Condition{
 			Type:               string(t),
 			Status:             metav1.ConditionFalse,

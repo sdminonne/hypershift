@@ -2862,6 +2862,403 @@ func TestSetMachineAndNodeConditions(t *testing.T) {
 			},
 			expectedCIDRCollision: nil,
 		},
+		// ---- CAPA condition passthrough tests (Enhancement PR #2178, Case 3.3) ----
+		{
+			// Case 3.3: CAPA surfaces InsufficientFreeAddressesInSubnet in the
+			// InfrastructureReadyCondition message with the subnet ID. The
+			// passthrough must preserve the error code and subnet ID in the
+			// AllMachinesReady condition.
+			name:         "When CAPA reports InsufficientFreeAddressesInSubnet via InfrastructureReady it should surface error code and subnet ID",
+			platformType: hyperv1.AWSPlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "1 of 2 completed",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "InstanceProvisionFailed",
+									Message: "failed to run instance: InsufficientFreeAddressesInSubnet: The subnet 'subnet-0abc123def456' has insufficient free addresses to satisfy the requested number of instances",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 1 machines are not ready",
+					"Machine node1: InstanceProvisionFailed: failed to run instance: InsufficientFreeAddressesInSubnet",
+					"subnet-0abc123def456",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
+		{
+			// Case 3.3 variant: the InfrastructureReadyCondition carries
+			// a step-counter message but the Ready condition contains the
+			// raw AWS error. The passthrough should still prefer the
+			// InfrastructureReady reason and fall back to Ready's message.
+			name:         "When CAPA InfrastructureReady has step-counter but Ready carries subnet error it should surface the subnet error from Ready message",
+			platformType: hyperv1.AWSPlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "InsufficientFreeAddressesInSubnet: Not enough IP space in subnet-0deadbeef",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "InstanceProvisionFailed",
+									Message: "1 of 2 completed",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 1 machines are not ready",
+					"Machine node1: InstanceProvisionFailed: InsufficientFreeAddressesInSubnet",
+					"subnet-0deadbeef",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
+		{
+			// Case 3.3 variant: multiple machines with different AWS errors
+			// should aggregate and preserve both error codes.
+			name:         "When CAPA reports multiple machines with different AWS subnet and capacity errors it should aggregate both",
+			platformType: hyperv1.AWSPlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "1 of 2 completed",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "InstanceProvisionFailed",
+									Message: "failed to run instance: InsufficientFreeAddressesInSubnet: subnet-0abc has no free IPs",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node2",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:   capiv1.ReadyCondition,
+									Status: metav1.ConditionTrue,
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 2 machines are not ready",
+					"Machine node1: InstanceProvisionFailed: failed to run instance: InsufficientFreeAddressesInSubnet",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
+		// ---- CAPZ condition passthrough tests (Enhancement PR #2178, Cases 2.1, 2.2, 2.8) ----
+		{
+			// Case 2.1: CAPZ surfaces RequestDisallowedByPolicy in the
+			// InfrastructureReadyCondition message with the policy name.
+			name:         "When CAPZ reports RequestDisallowedByPolicy via InfrastructureReady it should surface the policy name",
+			platformType: hyperv1.AzurePlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "1 of 3 completed",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "VMProvisionFailed",
+									Message: "failed to create VM: RequestDisallowedByPolicy: Resource 'vm-node1' was disallowed by policy 'deny-public-ip-on-nic' (policy assignment '/subscriptions/sub-123/providers/Microsoft.Authorization/policyAssignments/deny-public-ip')",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 1 machines are not ready",
+					"Machine node1: VMProvisionFailed: failed to create VM: RequestDisallowedByPolicy",
+					"deny-public-ip-on-nic",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
+		{
+			// Case 2.2: CAPZ surfaces QuotaExceeded in the
+			// InfrastructureReadyCondition message with quota type and region.
+			name:         "When CAPZ reports QuotaExceeded via InfrastructureReady it should surface quota type",
+			platformType: hyperv1.AzurePlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "1 of 3 completed",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "VMProvisionFailed",
+									Message: "failed to create VM: QuotaExceeded: Operation could not be completed as it results in exceeding approved standardDSv3Family Cores quota in region eastus",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 1 machines are not ready",
+					"Machine node1: VMProvisionFailed: failed to create VM: QuotaExceeded",
+					"standardDSv3Family",
+					"eastus",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
+		{
+			// Case 2.8: CAPZ surfaces AllocationFailed ARM error via
+			// InfrastructureReady with zone info.
+			name:         "When CAPZ reports AllocationFailed via InfrastructureReady it should surface the ARM error code",
+			platformType: hyperv1.AzurePlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "1 of 3 completed",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "VMProvisionFailed",
+									Message: "failed to create VM: AllocationFailed: Allocation failed. VM size Standard_D4s_v3 is not available in zone 2 of region eastus",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 1 machines are not ready",
+					"Machine node1: VMProvisionFailed: failed to create VM: AllocationFailed",
+					"Standard_D4s_v3",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
+		{
+			// Case 2.8 variant: OperationNotAllowed ARM error via
+			// the CAPZ "Failed" generic reason on InfrastructureReady.
+			name:         "When CAPZ reports OperationNotAllowed via InfrastructureReady with generic Failed reason it should still surface the error",
+			platformType: hyperv1.AzurePlatform,
+			machinesGenerator: func() []client.Object {
+				return []client.Object{
+					&capiv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "node1",
+							Namespace: "myns-cluster-name",
+							Annotations: map[string]string{
+								nodePoolAnnotation: "myns/np-name",
+							},
+						},
+						Status: capiv1.MachineStatus{
+							Conditions: []metav1.Condition{
+								{
+									Type:    capiv1.ReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "NotReady",
+									Message: "1 of 3 completed",
+								},
+								{
+									Type:    capiv1.InfrastructureReadyCondition,
+									Status:  metav1.ConditionFalse,
+									Reason:  "Failed",
+									Message: "OperationNotAllowed: The subscription has exceeded the maximum number of Standard_D4s_v3 VMs allowed in region eastus",
+								},
+								{
+									Type:   capiv1.MachineNodeHealthyCondition,
+									Status: metav1.ConditionTrue,
+								},
+							},
+						},
+					},
+				}
+			},
+			expectedAllMachine: &testCondition{
+				Status: corev1.ConditionFalse,
+				Reason: hyperv1.NodePoolInfrastructureFailureReason,
+				Messages: []string{
+					"1 of 1 machines are not ready",
+					"Machine node1: Failed: OperationNotAllowed",
+				},
+			},
+			expectedAllNodes: &testCondition{
+				Status:   corev1.ConditionTrue,
+				Reason:   hyperv1.AsExpectedReason,
+				Messages: []string{hyperv1.AllIsWellMessage},
+			},
+		},
 	} {
 		t.Run(tc.name, func(tt *testing.T) {
 			gg := NewWithT(tt)

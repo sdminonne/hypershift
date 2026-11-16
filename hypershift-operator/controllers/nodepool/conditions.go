@@ -11,6 +11,7 @@ import (
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests/ignitionserver"
 	"github.com/openshift/hypershift/hypershift-operator/featuregate"
+	"github.com/openshift/hypershift/support/diagnostics"
 	ignserver "github.com/openshift/hypershift/ignition-server/controllers"
 	"github.com/openshift/hypershift/pkg/manifests"
 	"github.com/openshift/hypershift/support/netutil"
@@ -666,7 +667,7 @@ func (r NodePoolReconciler) reachedIgnitionEndpointCondition(ctx context.Context
 	// if ignition is already reached and InPlace upgrade is used, skip recomputing the NodePoolReachedIgnitionEndpoint condition
 	// to avoid resetting the condition to False because of the missing the annotation on the new generated token-secret.
 	if oldReachedIgnitionEndpointCondition == nil || oldReachedIgnitionEndpointCondition.Status != corev1.ConditionTrue || nodePool.Spec.Management.UpgradeType != hyperv1.UpgradeTypeInPlace {
-		reachedIgnitionEndpointCondition, err := r.createReachedIgnitionEndpointCondition(ctx, tokenSecret, nodePool.Generation)
+		reachedIgnitionEndpointCondition, err := r.createReachedIgnitionEndpointCondition(ctx, tokenSecret, nodePool.Generation, hcluster.Spec.Platform.Type)
 		if err != nil {
 			return &ctrl.Result{}, fmt.Errorf("error setting IgnitionReached condition: %w", err)
 		}
@@ -707,7 +708,7 @@ func (r *NodePoolReconciler) setMachineAndNodeConditions(ctx context.Context, no
 		return fmt.Errorf("failed to get Machines: %w", err)
 	}
 
-	r.setAllMachinesReadyCondition(nodePool, machines)
+	r.setAllMachinesReadyCondition(ctx, nodePool, machines)
 
 	r.setAllNodesHealthyCondition(nodePool, machines)
 
@@ -767,6 +768,14 @@ func (r *NodePoolReconciler) setAllNodesHealthyCondition(nodePool *hyperv1.NodeP
 		}
 		if numNotHealthy > 0 {
 			reason, message = aggregateMachineReasonsAndMessages(messageMap, numMachines, numNotHealthy, aggregatorMachineStateHealthy)
+			// Append platform-specific connectivity hint when machines are waiting for a node ref,
+			// which indicates nodes may not be able to register with the API server.
+			if _, hasWaitingForNodeRef := messageMap[capiv1.WaitingForNodeRefV1Beta1Reason]; hasWaitingForNodeRef {
+				hint := nodeConnectivityHint(nodePool.Spec.Platform.Type)
+				if hint != "" && len(message)+1+len(hint) <= maxGlobalMessageLength {
+					message = message + "\n" + hint
+				}
+			}
 		}
 	}
 
@@ -780,7 +789,20 @@ func (r *NodePoolReconciler) setAllNodesHealthyCondition(nodePool *hyperv1.NodeP
 	SetStatusCondition(&nodePool.Status.Conditions, *allMachinesHealthyCondition)
 }
 
-func (r *NodePoolReconciler) setAllMachinesReadyCondition(nodePool *hyperv1.NodePool, machines []*capiv1.Machine) {
+// nodeConnectivityHint returns a platform-specific troubleshooting hint when
+// nodes may be unable to reach the API server (WaitingForNodeRef).
+func nodeConnectivityHint(platformType hyperv1.PlatformType) string {
+	switch platformType {
+	case hyperv1.AWSPlatform:
+		return "Nodes may be unable to reach the API server. Verify security group egress rules allow port 6443, check NACLs and route table configuration."
+	case hyperv1.AzurePlatform:
+		return "Nodes may be unable to reach the API server. Verify NSG rules and Private Link Service connectivity."
+	default:
+		return ""
+	}
+}
+
+func (r *NodePoolReconciler) setAllMachinesReadyCondition(ctx context.Context, nodePool *hyperv1.NodePool, machines []*capiv1.Machine) {
 	status := corev1.ConditionTrue
 	reason := hyperv1.AsExpectedReason
 	message := hyperv1.AllIsWellMessage
@@ -866,6 +888,11 @@ func (r *NodePoolReconciler) setAllMachinesReadyCondition(nodePool *hyperv1.Node
 			reason, message = aggregateMachineReasonsAndMessages(messageMap, numMachines, numNotReady, aggregatorMachineStateReady)
 			if hasInfraFailure {
 				reason = hyperv1.NodePoolInfrastructureFailureReason
+				for mapReason := range messageMap {
+					if isTerminalInfraReason(nodePool.Spec.Platform.Type, mapReason) {
+						diagnostics.RecordPlatformFailure(ctx, string(hyperv1.NodePoolAllMachinesReadyConditionType), reason, mapReason)
+					}
+				}
 				if nodePool.Spec.Management.AutoRepair {
 					message += "\nAutoRepair is enabled; the MachineHealthCheck will attempt to replace unhealthy machines unless the number of unhealthy machines exceeds maxUnhealthy (default 2)."
 				}
@@ -1045,7 +1072,7 @@ func (r *NodePoolReconciler) setCIDRConflictCondition(ctx context.Context, nodeP
 }
 
 // createReachedIgnitionEndpointCondition creates a condition for the NodePool based on the tokenSecret data.
-func (r NodePoolReconciler) createReachedIgnitionEndpointCondition(ctx context.Context, tokenSecret *corev1.Secret, generation int64) (*hyperv1.NodePoolCondition, error) { //nolint:unparam // error return kept for API consistency
+func (r NodePoolReconciler) createReachedIgnitionEndpointCondition(ctx context.Context, tokenSecret *corev1.Secret, generation int64, platformType hyperv1.PlatformType) (*hyperv1.NodePoolCondition, error) { //nolint:unparam // error return kept for API consistency
 	var condition *hyperv1.NodePoolCondition
 	if err := r.Get(ctx, crclient.ObjectKeyFromObject(tokenSecret), tokenSecret); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -1073,7 +1100,7 @@ func (r NodePoolReconciler) createReachedIgnitionEndpointCondition(ctx context.C
 			Type:               hyperv1.NodePoolReachedIgnitionEndpoint,
 			Status:             corev1.ConditionFalse,
 			Reason:             hyperv1.IgnitionNotReached,
-			Message:            "",
+			Message:            ignitionNotReachedMessage(platformType),
 			ObservedGeneration: generation,
 		}
 		return condition, nil
@@ -1088,6 +1115,19 @@ func (r NodePoolReconciler) createReachedIgnitionEndpointCondition(ctx context.C
 	}
 
 	return condition, nil
+}
+
+// ignitionNotReachedMessage returns a platform-specific troubleshooting hint
+// when nodes have not yet reached the ignition endpoint.
+func ignitionNotReachedMessage(platformType hyperv1.PlatformType) string {
+	switch platformType {
+	case hyperv1.AWSPlatform:
+		return "Nodes have not reached the ignition endpoint. Verify security group rules allow worker nodes to reach the Ignition server (port 22623), check NACL rules, DNS resolution, and proxy configuration."
+	case hyperv1.AzurePlatform:
+		return "Nodes have not reached the ignition endpoint. Verify NSG rules and Private Link Service connectivity."
+	default:
+		return "Nodes have not reached the ignition endpoint."
+	}
 }
 
 // createValidGeneratedPayloadCondition creates a condition for the NodePool based on the tokenSecret data.
