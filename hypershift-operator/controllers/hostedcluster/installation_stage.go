@@ -93,9 +93,9 @@ func reconcileInstallationStage(ctx context.Context, c client.Client,
 
 // hasHealthyWorker returns true if any NodePool for the cluster has at least
 // one ready machine, determined by checking AllMachinesReady=True or
-// NodeVersion.ReadyNodeCount > 0. The condition's ObservedGeneration must
-// match the NodePool's Generation to avoid advancing a forward-only stage
-// based on a stale condition from an older spec.
+// NodeVersion.ReadyNodeCount > 0. Both paths are guarded by
+// ObservedGeneration to avoid advancing a forward-only stage based on a
+// stale condition from an older spec.
 func hasHealthyWorker(ctx context.Context, c client.Client, hcluster *hyperv1.HostedCluster) bool {
 	nodePools, err := listNodePools(ctx, c, hcluster.Namespace, hcluster.Name)
 	if err != nil || len(nodePools) == 0 {
@@ -108,7 +108,13 @@ func hasHealthyWorker(ctx context.Context, c client.Client, hcluster *hyperv1.Ho
 		if findNodePoolConditionTrueCurrent(np.Status.Conditions, hyperv1.NodePoolAllMachinesReadyConditionType, np.Generation) {
 			return true
 		}
-		// Check NodeVersion ready counts.
+		// Check NodeVersion ready counts as a fallback.
+		// Guard with the same ObservedGeneration check on AllMachinesReady:
+		// if the condition is stale (wrong generation), the NodeVersion counts
+		// may also be stale, so skip to avoid advancing a forward-only stage.
+		if isNodePoolConditionStale(np.Status.Conditions, hyperv1.NodePoolAllMachinesReadyConditionType, np.Generation) {
+			continue
+		}
 		for _, nv := range np.Status.NodesInfo.NodeVersions {
 			if nv.ReadyNodeCount != nil && *nv.ReadyNodeCount > 0 {
 				return true
@@ -129,6 +135,19 @@ func findNodePoolConditionTrueCurrent(conditions []hyperv1.NodePoolCondition, co
 				continue
 			}
 			return true
+		}
+	}
+	return false
+}
+
+// isNodePoolConditionStale returns true if the named condition exists and its
+// ObservedGeneration is non-zero but does not match the expected generation,
+// indicating the condition reflects an older NodePool spec.
+func isNodePoolConditionStale(conditions []hyperv1.NodePoolCondition, conditionType string, generation int64) bool {
+	for i := range conditions {
+		c := &conditions[i]
+		if c.Type == conditionType {
+			return c.ObservedGeneration != 0 && c.ObservedGeneration != generation
 		}
 	}
 	return false

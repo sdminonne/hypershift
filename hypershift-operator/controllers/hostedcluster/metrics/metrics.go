@@ -688,7 +688,7 @@ func collectInstallationStageMetric(ch chan<- prometheus.Metric, hcluster *hyper
 
 // collectInstallationFailureReasonMetric emits a gauge per known failure reason
 // for the given HostedCluster: 1 if the reason is currently active, 0 if not.
-// Active reasons are derived from CPC Available conditions and HC-level conditions.
+// Active reasons are derived from CPC RolloutComplete conditions and HC-level conditions.
 func collectInstallationFailureReasonMetric(ch chan<- prometheus.Metric, hcluster *hyperv1.HostedCluster, hclusterLabelValues []string, cpcs []hyperv1.ControlPlaneComponent) {
 	// Collect active reasons from CPC RolloutComplete conditions.
 	// RolloutComplete is used instead of Available to catch partial scheduling

@@ -180,9 +180,17 @@ func (c *controlPlaneWorkload[T]) reconcileComponentStatus(cpContext ControlPlan
 		}
 	}
 
-	// Diagnose pod failures once and reuse for both conditions to avoid
-	// duplicate Get+List calls with a 5s timeout each.
-	diagReason, diagMessage := diagnosePodFailure(cpContext, c.name)
+	// Only diagnose pod failures when the component was not fully healthy
+	// on the previous reconcile, to avoid unnecessary Get+List API calls
+	// (with 5s timeout) on every reconcile for ~40 healthy components.
+	var diagReason, diagMessage string
+	availCond := meta.FindStatusCondition(component.Status.Conditions, string(hyperv1.ControlPlaneComponentAvailable))
+	rolloutCond := meta.FindStatusCondition(component.Status.Conditions, string(hyperv1.ControlPlaneComponentRolloutComplete))
+	previouslyHealthy := availCond != nil && availCond.Status == metav1.ConditionTrue &&
+		rolloutCond != nil && rolloutCond.Status == metav1.ConditionTrue
+	if !previouslyHealthy {
+		diagReason, diagMessage = diagnosePodFailure(cpContext, c.name)
+	}
 	c.setAvailableCondition(cpContext, &component.Status.Conditions, diagReason, diagMessage)
 	rolloutStatus := c.setRolloutCompleteCondition(cpContext, &component.Status.Conditions, unmetPreconditions, unavailableDependencies, reconcilationError, diagReason, diagMessage)
 	if rolloutStatus == metav1.ConditionTrue {
