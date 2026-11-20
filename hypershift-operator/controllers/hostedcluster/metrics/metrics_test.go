@@ -1896,7 +1896,7 @@ func TestCreateHostedClustersMetricsCollector(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gather 1 failed: %v", err)
 		}
-		if got := getFailureReasonGauge(result, hyperv1.RouteNotAdmittedReason); got != 0 {
+		if got := getFailureReasonGauge(result, hyperv1.ReasonRouteNotAdmitted); got != 0 {
 			t.Errorf("after baseline: RouteNotAdmitted = %v, want 0", got)
 		}
 
@@ -1904,7 +1904,7 @@ func TestCreateHostedClustersMetricsCollector(t *testing.T) {
 		meta.SetStatusCondition(&hcluster.Status.Conditions, metav1.Condition{
 			Type:   string(hyperv1.InfrastructureReady),
 			Status: metav1.ConditionFalse,
-			Reason: hyperv1.RouteNotAdmittedReason,
+			Reason: hyperv1.ReasonRouteNotAdmitted,
 		})
 		if err := c.Status().Update(context.Background(), hcluster); err != nil {
 			t.Fatalf("status update failed: %v", err)
@@ -1915,7 +1915,7 @@ func TestCreateHostedClustersMetricsCollector(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gather 2 failed: %v", err)
 		}
-		if got := getFailureReasonGauge(result, hyperv1.RouteNotAdmittedReason); got != 1 {
+		if got := getFailureReasonGauge(result, hyperv1.ReasonRouteNotAdmitted); got != 1 {
 			t.Errorf("during failure: RouteNotAdmitted = %v, want 1", got)
 		}
 
@@ -1932,7 +1932,7 @@ func TestCreateHostedClustersMetricsCollector(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gather 3 failed: %v", err)
 		}
-		if got := getFailureReasonGauge(result, hyperv1.RouteNotAdmittedReason); got != 0 {
+		if got := getFailureReasonGauge(result, hyperv1.ReasonRouteNotAdmitted); got != 0 {
 			t.Errorf("after recovery: RouteNotAdmitted = %v, want 0", got)
 		}
 	})

@@ -1534,62 +1534,7 @@ func TestNodeConnectivityHint(t *testing.T) {
 	}
 }
 
-func TestSetAllNodesHealthyConditionWithConnectivityHint(t *testing.T) {
-	g := NewWithT(t)
-
-	nodePool := &hyperv1.NodePool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-nodepool",
-			Namespace:  "test-ns",
-			Generation: 1,
-		},
-		Spec: hyperv1.NodePoolSpec{
-			Platform: hyperv1.NodePoolPlatform{
-				Type: hyperv1.AWSPlatform,
-			},
-			Replicas: ptr.To[int32](1),
-		},
-	}
-
-	// Machine without NodeHealthy condition — triggers WaitingForNodeRef.
-	machines := []*v1beta2.Machine{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "machine-1",
-			},
-			Status: v1beta2.MachineStatus{
-				// No conditions — will be treated as WaitingForNodeRef.
-			},
-		},
-	}
-
-	r := &NodePoolReconciler{}
-	r.setAllNodesHealthyCondition(nodePool, machines)
-
-	condition := FindStatusCondition(nodePool.Status.Conditions, hyperv1.NodePoolAllNodesHealthyConditionType)
-	g.Expect(condition).NotTo(BeNil())
-	g.Expect(condition.Status).To(Equal(corev1.ConditionFalse))
-	g.Expect(condition.Message).To(ContainSubstring("port 6443"))
-	g.Expect(condition.Message).To(ContainSubstring("Nodes may be unable to reach the API server"))
-}
-
-func TestSetAllNodesHealthyConditionNoHintForNonAWS(t *testing.T) {
-	g := NewWithT(t)
-
-	nodePool := &hyperv1.NodePool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-nodepool",
-			Namespace:  "test-ns",
-			Generation: 1,
-		},
-		Spec: hyperv1.NodePoolSpec{
-			Platform: hyperv1.NodePoolPlatform{
-				Type: hyperv1.KubevirtPlatform,
-			},
-			Replicas: ptr.To[int32](1),
-		},
-	}
-
+func TestNodePoolReconciler_SetAllNodesHealthyCondition(t *testing.T) {
 	machines := []*v1beta2.Machine{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1599,12 +1544,58 @@ func TestSetAllNodesHealthyConditionNoHintForNonAWS(t *testing.T) {
 		},
 	}
 
-	r := &NodePoolReconciler{}
-	r.setAllNodesHealthyCondition(nodePool, machines)
+	tests := []struct {
+		name             string
+		platformType     hyperv1.PlatformType
+		expectHint       bool
+		hintSubstring    string
+		notHintSubstring string
+	}{
+		{
+			name:          "AWS platform includes connectivity hint",
+			platformType:  hyperv1.AWSPlatform,
+			expectHint:    true,
+			hintSubstring: "Nodes may be unable to reach the API server",
+		},
+		{
+			name:             "non-AWS platform does not include connectivity hint",
+			platformType:     hyperv1.KubevirtPlatform,
+			expectHint:       false,
+			notHintSubstring: "Nodes may be unable to reach the API server",
+		},
+	}
 
-	condition := FindStatusCondition(nodePool.Status.Conditions, hyperv1.NodePoolAllNodesHealthyConditionType)
-	g.Expect(condition).NotTo(BeNil())
-	g.Expect(condition.Status).To(Equal(corev1.ConditionFalse))
-	// KubeVirt platform should NOT have a connectivity hint.
-	g.Expect(condition.Message).NotTo(ContainSubstring("Nodes may be unable to reach the API server"))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			nodePool := &hyperv1.NodePool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-nodepool",
+					Namespace:  "test-ns",
+					Generation: 1,
+				},
+				Spec: hyperv1.NodePoolSpec{
+					Platform: hyperv1.NodePoolPlatform{
+						Type: tc.platformType,
+					},
+					Replicas: ptr.To[int32](1),
+				},
+			}
+
+			r := &NodePoolReconciler{}
+			r.setAllNodesHealthyCondition(nodePool, machines)
+
+			condition := FindStatusCondition(nodePool.Status.Conditions, hyperv1.NodePoolAllNodesHealthyConditionType)
+			g.Expect(condition).NotTo(BeNil())
+			g.Expect(condition.Status).To(Equal(corev1.ConditionFalse))
+
+			if tc.expectHint {
+				g.Expect(condition.Message).To(ContainSubstring("port 6443"))
+				g.Expect(condition.Message).To(ContainSubstring(tc.hintSubstring))
+			} else {
+				g.Expect(condition.Message).NotTo(ContainSubstring(tc.notHintSubstring))
+			}
+		})
+	}
 }

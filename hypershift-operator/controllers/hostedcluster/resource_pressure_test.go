@@ -30,7 +30,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 					{
 						Type:    string(hyperv1.ControlPlaneComponentRolloutComplete),
 						Status:  metav1.ConditionFalse,
-						Reason:  hyperv1.PodSchedulingFailedReason,
+						Reason:  hyperv1.ReasonPodSchedulingFailed,
 						Message: message,
 					},
 				},
@@ -63,7 +63,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 					{
 						Type:    string(hyperv1.ControlPlaneComponentRolloutComplete),
 						Status:  metav1.ConditionFalse,
-						Reason:  hyperv1.CrashLoopBackOffReason,
+						Reason:  hyperv1.ReasonCrashLoopBackOff,
 						Message: "Pod etcd-0 container etcd: CrashLoopBackOff",
 					},
 				},
@@ -83,13 +83,13 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 			name:           "When no CPCs exist it should report no pressure",
 			objects:        nil,
 			expectedStatus: metav1.ConditionFalse,
-			expectedReason: hyperv1.NoPressureReason,
+			expectedReason: hyperv1.ReasonNoPressure,
 		},
 		{
 			name:           "When all CPCs are available it should report no pressure",
 			objects:        []client.Object{availableCPC("kube-apiserver")},
 			expectedStatus: metav1.ConditionFalse,
-			expectedReason: hyperv1.NoPressureReason,
+			expectedReason: hyperv1.ReasonNoPressure,
 		},
 		{
 			name: "When a CPC has PodSchedulingFailed it should report pressure with resource type",
@@ -97,7 +97,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				schedulingFailedCPC("etcd", "Pod etcd-0 is unschedulable: Insufficient cpu, Insufficient memory"),
 			},
 			expectedStatus: metav1.ConditionTrue,
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			expectedMsg:    "1 component with scheduling failures (etcd): Insufficient cpu, Insufficient memory",
 		},
 		{
@@ -108,7 +108,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				availableCPC("kube-scheduler"),
 			},
 			expectedStatus: metav1.ConditionTrue,
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			expectedMsg:    "2 components with scheduling failures (etcd, kube-apiserver)",
 		},
 		{
@@ -118,7 +118,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				availableCPC("kube-apiserver"),
 			},
 			expectedStatus: metav1.ConditionFalse,
-			expectedReason: hyperv1.NoPressureReason,
+			expectedReason: hyperv1.ReasonNoPressure,
 		},
 		{
 			name: "When a CPC has no RolloutComplete condition it should not report pressure",
@@ -129,7 +129,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				},
 			},
 			expectedStatus: metav1.ConditionFalse,
-			expectedReason: hyperv1.NoPressureReason,
+			expectedReason: hyperv1.ReasonNoPressure,
 		},
 		{
 			name: "When scheduling failure message has no Insufficient match it should still report pressure",
@@ -137,7 +137,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				schedulingFailedCPC("etcd", "Pod etcd-0 is unschedulable"),
 			},
 			expectedStatus: metav1.ConditionTrue,
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			expectedMsg:    "1 component with scheduling failures (etcd)",
 		},
 		{
@@ -149,7 +149,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				schedulingFailedCPC("etcd", "Pod etcd-0 is unschedulable: Insufficient cpu"),
 			},
 			expectedStatus: metav1.ConditionTrue,
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			notExpectedMsg: "ip-10-0-1-42",
 		},
 		{
@@ -160,7 +160,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 				schedulingFailedCPC("kube-apiserver", "Pod kube-apiserver-0 is unschedulable: Insufficient cpu"),
 			},
 			expectedStatus: metav1.ConditionTrue,
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			expectedMsg:    "3 components with scheduling failures (etcd, kube-apiserver, kube-scheduler)",
 		},
 	}
@@ -215,7 +215,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 						{
 							Type:    string(hyperv1.ControlPlaneComponentRolloutComplete),
 							Status:  metav1.ConditionFalse,
-							Reason:  hyperv1.PodSchedulingFailedReason,
+							Reason:  hyperv1.ReasonPodSchedulingFailed,
 							Message: "Pod pod-0 is unschedulable: Insufficient cpu, Insufficient memory",
 						},
 					},
@@ -255,7 +255,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 						{
 							Type:    string(hyperv1.ControlPlaneComponentRolloutComplete),
 							Status:  metav1.ConditionFalse,
-							Reason:  hyperv1.PodSchedulingFailedReason,
+							Reason:  hyperv1.ReasonPodSchedulingFailed,
 							Message: "Pod etcd-0 is unschedulable: Insufficient cpu",
 						},
 					},
@@ -268,7 +268,7 @@ func TestReconcileManagementClusterResourcePressure(t *testing.T) {
 						{
 							Type:    string(hyperv1.ControlPlaneComponentRolloutComplete),
 							Status:  metav1.ConditionFalse,
-							Reason:  hyperv1.PodSchedulingFailedReason,
+							Reason:  hyperv1.ReasonPodSchedulingFailed,
 							Message: "Pod kube-apiserver-0 is unschedulable: Insufficient cpu",
 						},
 					},

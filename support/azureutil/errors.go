@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-
 	"github.com/openshift/hypershift/support/diagnostics"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
 
 const (

@@ -68,7 +68,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.CrashLoopBackOffReason,
+			expectedReason: hyperv1.ReasonCrashLoopBackOff,
 			expectedMsg:    "CrashLoopBackOff",
 		},
 		{
@@ -104,7 +104,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.ImagePullBackOffReason,
+			expectedReason: hyperv1.ReasonImagePullBackOff,
 			expectedMsg:    "ImagePullBackOff",
 		},
 		{
@@ -138,7 +138,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			expectedMsg:    "Pod test-component-ghi is unschedulable: Insufficient cpu, Insufficient memory",
 		},
 		{
@@ -216,7 +216,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.CrashLoopBackOffReason,
+			expectedReason: hyperv1.ReasonCrashLoopBackOff,
 			expectedMsg:    "CrashLoopBackOff",
 		},
 		{
@@ -252,7 +252,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.CrashLoopBackOffReason,
+			expectedReason: hyperv1.ReasonCrashLoopBackOff,
 			expectedMsg:    "init container",
 		},
 		{
@@ -286,7 +286,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.PodSchedulingFailedReason,
+			expectedReason: hyperv1.ReasonPodSchedulingFailed,
 			expectedMsg:    "Pod test-component-nores is unschedulable",
 		},
 		{
@@ -322,7 +322,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.CrashLoopBackOffReason,
+			expectedReason: hyperv1.ReasonCrashLoopBackOff,
 			expectedMsg:    "...",
 		},
 		{
@@ -380,7 +380,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: hyperv1.ImagePullBackOffReason,
+			expectedReason: hyperv1.ReasonImagePullBackOff,
 			expectedMsg:    "Pod test-component-zzz-active container main: ImagePullBackOff",
 		},
 		{
@@ -468,7 +468,7 @@ func TestDiagnosePodFailure(t *testing.T) {
 				g.Expect(len(msg)).To(BeNumerically("<=", maxDiagnosticMessageLen))
 			}
 			// Scheduling failure messages must not leak management cluster details.
-			if tc.expectedReason == hyperv1.PodSchedulingFailedReason {
+			if tc.expectedReason == hyperv1.ReasonPodSchedulingFailed {
 				g.Expect(msg).NotTo(ContainSubstring("nodes are available"))
 				g.Expect(msg).NotTo(ContainSubstring("preemption"))
 			}

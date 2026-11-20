@@ -53,7 +53,7 @@ func reconcileManagementClusterResourcePressure(ctx context.Context, c client.Cl
 		meta.SetStatusCondition(&hcluster.Status.Conditions, metav1.Condition{
 			Type:    string(hyperv1.ManagementClusterResourcePressure),
 			Status:  metav1.ConditionUnknown,
-			Reason:  hyperv1.ControlPlanePodStatusUnavailableReason,
+			Reason:  hyperv1.ReasonControlPlanePodStatusUnavailable,
 			Message: "Unable to determine scheduling pressure: control plane component status could not be retrieved",
 		})
 		return
@@ -64,7 +64,7 @@ func reconcileManagementClusterResourcePressure(ctx context.Context, c client.Cl
 		meta.SetStatusCondition(&hcluster.Status.Conditions, metav1.Condition{
 			Type:    string(hyperv1.ManagementClusterResourcePressure),
 			Status:  metav1.ConditionFalse,
-			Reason:  hyperv1.NoPressureReason,
+			Reason:  hyperv1.ReasonNoPressure,
 			Message: "No scheduling failures detected",
 		})
 		return
@@ -76,7 +76,7 @@ func reconcileManagementClusterResourcePressure(ctx context.Context, c client.Cl
 	for i := range componentsList.Items {
 		cpc := &componentsList.Items[i]
 		rollout := meta.FindStatusCondition(cpc.Status.Conditions, string(hyperv1.ControlPlaneComponentRolloutComplete))
-		if rollout == nil || rollout.Reason != hyperv1.PodSchedulingFailedReason {
+		if rollout == nil || rollout.Reason != hyperv1.ReasonPodSchedulingFailed {
 			continue
 		}
 		affectedComponents = append(affectedComponents, cpc.Name)
@@ -88,7 +88,7 @@ func reconcileManagementClusterResourcePressure(ctx context.Context, c client.Cl
 		meta.SetStatusCondition(&hcluster.Status.Conditions, metav1.Condition{
 			Type:    string(hyperv1.ManagementClusterResourcePressure),
 			Status:  metav1.ConditionFalse,
-			Reason:  hyperv1.NoPressureReason,
+			Reason:  hyperv1.ReasonNoPressure,
 			Message: "No scheduling failures detected",
 		})
 		return
@@ -99,7 +99,7 @@ func reconcileManagementClusterResourcePressure(ctx context.Context, c client.Cl
 	meta.SetStatusCondition(&hcluster.Status.Conditions, metav1.Condition{
 		Type:    string(hyperv1.ManagementClusterResourcePressure),
 		Status:  metav1.ConditionTrue,
-		Reason:  hyperv1.PodSchedulingFailedReason,
+		Reason:  hyperv1.ReasonPodSchedulingFailed,
 		Message: msg,
 	})
 }

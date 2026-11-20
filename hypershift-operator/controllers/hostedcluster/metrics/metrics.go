@@ -196,10 +196,10 @@ var (
 		append(hclusterLabels, "reason"), nil)
 
 	knownFailureReasons = []string{
-		hyperv1.PodSchedulingFailedReason,
-		hyperv1.CrashLoopBackOffReason,
-		hyperv1.ImagePullBackOffReason,
-		hyperv1.RouteNotAdmittedReason,
+		hyperv1.ReasonPodSchedulingFailed,
+		hyperv1.ReasonCrashLoopBackOff,
+		hyperv1.ReasonImagePullBackOff,
+		hyperv1.ReasonRouteNotAdmitted,
 		string(hyperv1.ClusterVersionFailing),
 	}
 )

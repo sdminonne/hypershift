@@ -4858,7 +4858,7 @@ func TestReconcileInfrastructureStatusCondition(t *testing.T) {
 				RouteNotAdmittedMsg: "Routes not admitted: kube-apiserver-external",
 			},
 			expectedCondStatus: metav1.ConditionFalse,
-			expectedCondReason: hyperv1.RouteNotAdmittedReason,
+			expectedCondReason: hyperv1.ReasonRouteNotAdmitted,
 		},
 		{
 			name: "When all hosts are populated but a route is not admitted, it should set InfrastructureReady to False with RouteNotAdmitted reason",
@@ -4881,7 +4881,7 @@ func TestReconcileInfrastructureStatusCondition(t *testing.T) {
 				RouteNotAdmittedMsg: "Routes not admitted: oauth",
 			},
 			expectedCondStatus: metav1.ConditionFalse,
-			expectedCondReason: hyperv1.RouteNotAdmittedReason,
+			expectedCondReason: hyperv1.ReasonRouteNotAdmitted,
 		},
 	}
 

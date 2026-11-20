@@ -453,7 +453,7 @@ func TestReconcileComponentStatus(t *testing.T) {
 		rollout := meta.FindStatusCondition(componentStatus.Status.Conditions, string(hyperv1.ControlPlaneComponentRolloutComplete))
 		g.Expect(rollout).NotTo(BeNil())
 		g.Expect(rollout.Status).To(Equal(metav1.ConditionFalse))
-		g.Expect(rollout.Reason).To(Equal(hyperv1.PodSchedulingFailedReason))
+		g.Expect(rollout.Reason).To(Equal(hyperv1.ReasonPodSchedulingFailed))
 		g.Expect(rollout.Message).To(ContainSubstring("Insufficient cpu"))
 		// Must not leak management cluster details.
 		g.Expect(rollout.Message).NotTo(ContainSubstring("nodes are available"))

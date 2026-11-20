@@ -936,7 +936,7 @@ func (r *HostedControlPlaneReconciler) reconcileInfrastructureStatusCondition(ct
 			newCondition = metav1.Condition{
 				Type:    string(hyperv1.InfrastructureReady),
 				Status:  metav1.ConditionFalse,
-				Reason:  hyperv1.RouteNotAdmittedReason,
+				Reason:  hyperv1.ReasonRouteNotAdmitted,
 				Message: message,
 			}
 			r.Log.Info("Infrastructure is not yet ready")
@@ -955,7 +955,7 @@ func (r *HostedControlPlaneReconciler) reconcileInfrastructureStatusCondition(ct
 		}
 		reason := hyperv1.WaitingOnInfrastructureReadyReason
 		if infraStatus.RouteNotAdmitted {
-			reason = hyperv1.RouteNotAdmittedReason
+			reason = hyperv1.ReasonRouteNotAdmitted
 			if infraStatus.RouteNotAdmittedMsg != "" {
 				if len(message) > 0 {
 					message = message + "; " + infraStatus.RouteNotAdmittedMsg

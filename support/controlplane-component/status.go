@@ -392,7 +392,7 @@ func diagnosePodsBySelector(ctx context.Context, c client.Client, namespace stri
 		// Check for scheduling failures.
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse && cond.Reason == "Unschedulable" {
-				return hyperv1.PodSchedulingFailedReason, truncateMessage(sanitizeSchedulerMessage(pod.Name, cond.Message))
+				return hyperv1.ReasonPodSchedulingFailed, truncateMessage(sanitizeSchedulerMessage(pod.Name, cond.Message))
 			}
 		}
 
@@ -405,9 +405,9 @@ func diagnosePodsBySelector(ctx context.Context, c client.Client, namespace stri
 					if cs.LastTerminationState.Terminated != nil {
 						msg += fmt.Sprintf(" (%s)", cs.LastTerminationState.Terminated.Reason)
 					}
-					return hyperv1.CrashLoopBackOffReason, truncateMessage(msg)
+					return hyperv1.ReasonCrashLoopBackOff, truncateMessage(msg)
 				case "ImagePullBackOff", "ErrImagePull":
-					return hyperv1.ImagePullBackOffReason, truncateMessage(fmt.Sprintf("Pod %s container %s: %s", pod.Name, cs.Name, cs.State.Waiting.Reason))
+					return hyperv1.ReasonImagePullBackOff, truncateMessage(fmt.Sprintf("Pod %s container %s: %s", pod.Name, cs.Name, cs.State.Waiting.Reason))
 				}
 			}
 		}
@@ -415,9 +415,9 @@ func diagnosePodsBySelector(ctx context.Context, c client.Client, namespace stri
 			if cs.State.Waiting != nil {
 				switch cs.State.Waiting.Reason {
 				case "CrashLoopBackOff":
-					return hyperv1.CrashLoopBackOffReason, truncateMessage(fmt.Sprintf("Pod %s init container %s: CrashLoopBackOff", pod.Name, cs.Name))
+					return hyperv1.ReasonCrashLoopBackOff, truncateMessage(fmt.Sprintf("Pod %s init container %s: CrashLoopBackOff", pod.Name, cs.Name))
 				case "ImagePullBackOff", "ErrImagePull":
-					return hyperv1.ImagePullBackOffReason, truncateMessage(fmt.Sprintf("Pod %s init container %s: %s", pod.Name, cs.Name, cs.State.Waiting.Reason))
+					return hyperv1.ReasonImagePullBackOff, truncateMessage(fmt.Sprintf("Pod %s init container %s: %s", pod.Name, cs.Name, cs.State.Waiting.Reason))
 				}
 			}
 		}

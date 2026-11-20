@@ -369,7 +369,7 @@ func TestAWSHealthCheckIdentityProviderWithMockEC2(t *testing.T) {
 					Namespace:  "test-namespace",
 					Generation: 1,
 				},
-				Spec:   tc.hcpSpec,
+				Spec: tc.hcpSpec,
 				Status: hyperv1.HostedControlPlaneStatus{
 					Conditions: []metav1.Condition{},
 				},

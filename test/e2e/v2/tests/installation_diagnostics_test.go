@@ -84,7 +84,7 @@ func ValidateManagementClusterResourcePressureTest(getTestCtx internal.TestConte
 					"ManagementClusterResourcePressure condition should be present on HostedCluster %s/%s", hc.Namespace, hc.Name)
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse),
 					"ManagementClusterResourcePressure should be False on HostedCluster %s/%s", hc.Namespace, hc.Name)
-				g.Expect(cond.Reason).To(Equal(hyperv1.NoPressureReason),
+				g.Expect(cond.Reason).To(Equal(hyperv1.ReasonNoPressure),
 					"ManagementClusterResourcePressure reason should be NoPressure on HostedCluster %s/%s", hc.Namespace, hc.Name)
 			}).WithContext(tc.Context).WithTimeout(2 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 		})
@@ -153,7 +153,7 @@ func SchedulingFailureInjectionTest(getTestCtx internal.TestContextGetter) {
 		meta.SetStatusCondition(&targetCPC.Status.Conditions, metav1.Condition{
 			Type:    string(hyperv1.ControlPlaneComponentRolloutComplete),
 			Status:  metav1.ConditionFalse,
-			Reason:  hyperv1.PodSchedulingFailedReason,
+			Reason:  hyperv1.ReasonPodSchedulingFailed,
 			Message: "Injected by installation-diagnostics e2e test",
 		})
 		Expect(tc.MgmtClient.Status().Patch(ctx, targetCPC, patch)).To(Succeed())
@@ -185,7 +185,7 @@ func SchedulingFailureInjectionTest(getTestCtx internal.TestContextGetter) {
 				"ManagementClusterResourcePressure condition should be present on HostedCluster")
 			g.Expect(cond.Status).To(Equal(metav1.ConditionFalse),
 				"ManagementClusterResourcePressure should self-clear to False after recovery")
-			g.Expect(cond.Reason).To(Equal(hyperv1.NoPressureReason),
+			g.Expect(cond.Reason).To(Equal(hyperv1.ReasonNoPressure),
 				"ManagementClusterResourcePressure reason should be NoPressure after recovery")
 		}).WithContext(ctx).WithTimeout(10 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 	})

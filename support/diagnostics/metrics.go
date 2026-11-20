@@ -3,16 +3,17 @@ package diagnostics
 import (
 	"context"
 
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 var DiagnosticFallbackTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "hypershift_diagnostic_fallback_total",
-		Help: "Number of times platform-specific diagnostic enrichment fell back to generic message due to missing or unparseable input.",
+		Help: "Number of times platform-specific diagnostic enrichment fell back to generic message due to missing or unparsable input.",
 	},
 	[]string{"platform", "condition", "case"},
 )
