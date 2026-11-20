@@ -33,6 +33,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -178,11 +179,14 @@ func (r *Reconciler) ReconcileInfrastructureStatus(ctx context.Context, hcp *hyp
 	}
 
 	// Check Route admission status by inspecting Route resources directly,
-	// only after all required LoadBalancer services have been provisioned.
-	if areLoadBalancersReady(hcp, infraStatus) {
+	// only when infrastructure is not yet ready and all required LoadBalancer
+	// services have been provisioned. This check is purely diagnostic and must
+	// never fail infrastructure status reconciliation or regress an already-ready
+	// cluster.
+	if !infraStatus.IsReady() && areLoadBalancersReady(hcp, infraStatus) {
 		notAdmittedRoutes, routeErr := r.CheckRouteAdmission(ctx, hcp, infraStatus.NeedInternalRouter)
 		if routeErr != nil {
-			errs = append(errs, routeErr)
+			ctrl.LoggerFrom(ctx).Error(routeErr, "failed to check route admission")
 		} else if len(notAdmittedRoutes) > 0 {
 			infraStatus.RouteNotAdmitted = true
 			infraStatus.RouteNotAdmittedMsg = fmt.Sprintf("Routes not admitted: %s", strings.Join(notAdmittedRoutes, ", "))

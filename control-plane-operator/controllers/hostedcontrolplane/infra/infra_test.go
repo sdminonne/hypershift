@@ -2597,6 +2597,7 @@ func TestReconcileInfrastructureStatus(t *testing.T) {
 		hcp                      *hyperv1.HostedControlPlane
 		provisionRouterLB        bool
 		provisionKASLB           bool
+		interceptorFuncs         interceptor.Funcs
 		expectedRouteNotAdmitted bool
 		expectedRouteMsgContains string
 	}{
@@ -2619,14 +2620,74 @@ func TestReconcileInfrastructureStatus(t *testing.T) {
 			expectedRouteNotAdmitted: false,
 		},
 		{
-			name: "When LoadBalancer is provisioned and routes are not admitted, it should report RouteNotAdmitted",
+			name: "When LoadBalancer is provisioned, route hosts are not populated, and routes are not admitted, it should report RouteNotAdmitted",
 			hcp: withServices(
 				withAWSEndpointAccess(baseAWSHCP(), hyperv1.Public),
-				kasServiceLoadBalancerOthersRoute(),
+				[]hyperv1.ServicePublishingStrategyMapping{
+					{
+						Service:                   hyperv1.APIServer,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.LoadBalancer},
+					},
+					{
+						Service:                   hyperv1.Konnectivity,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.Route},
+					},
+					{
+						Service:                   hyperv1.OAuthServer,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.Route},
+					},
+					{
+						Service:                   hyperv1.Ignition,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.Route},
+					},
+				},
 			),
 			provisionKASLB:           true,
 			expectedRouteNotAdmitted: true,
 			expectedRouteMsgContains: "Routes not admitted: konnectivity-server, oauth",
+		},
+		{
+			name: "When infrastructure is already ready and routes are not admitted, it should not report RouteNotAdmitted",
+			hcp: withServices(
+				withAWSEndpointAccess(baseAWSHCP(), hyperv1.Public),
+				allServicesRouteWithHostnames(),
+			),
+			provisionRouterLB:        true,
+			expectedRouteNotAdmitted: false,
+		},
+		{
+			name: "When listing routes fails with a transient error, it should not fail ReconcileInfrastructureStatus",
+			hcp: withServices(
+				withAWSEndpointAccess(baseAWSHCP(), hyperv1.Public),
+				[]hyperv1.ServicePublishingStrategyMapping{
+					{
+						Service:                   hyperv1.APIServer,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.LoadBalancer},
+					},
+					{
+						Service:                   hyperv1.Konnectivity,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.Route},
+					},
+					{
+						Service:                   hyperv1.OAuthServer,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.Route},
+					},
+					{
+						Service:                   hyperv1.Ignition,
+						ServicePublishingStrategy: hyperv1.ServicePublishingStrategy{Type: hyperv1.Route},
+					},
+				},
+			),
+			provisionKASLB: true,
+			interceptorFuncs: interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*routev1.RouteList); ok {
+						return fmt.Errorf("apiserver unavailable")
+					}
+					return c.List(ctx, list, opts...)
+				},
+			},
+			expectedRouteNotAdmitted: false,
 		},
 	}
 
@@ -2641,6 +2702,7 @@ func TestReconcileInfrastructureStatus(t *testing.T) {
 				WithIndex(&corev1.Event{}, events.EventInvolvedObjectUIDField, func(obj client.Object) []string {
 					return []string{string(obj.(*corev1.Event).InvolvedObject.UID)}
 				}).
+				WithInterceptorFuncs(tc.interceptorFuncs).
 				Build()
 
 			r := NewReconciler(fakeClient, testIngressDomain)

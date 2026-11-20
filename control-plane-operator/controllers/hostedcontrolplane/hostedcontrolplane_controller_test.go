@@ -4861,7 +4861,7 @@ func TestReconcileInfrastructureStatusCondition(t *testing.T) {
 			expectedCondReason: hyperv1.RouteNotAdmittedReason,
 		},
 		{
-			name: "When all hosts are populated but a route is not admitted, it should set InfrastructureReady to False with RouteNotAdmitted reason",
+			name: "When all hosts are populated, it should set InfrastructureReady to True even if RouteNotAdmitted is set",
 			hcp: &hyperv1.HostedControlPlane{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-hcp",
@@ -4880,8 +4880,12 @@ func TestReconcileInfrastructureStatusCondition(t *testing.T) {
 				RouteNotAdmitted:    true,
 				RouteNotAdmittedMsg: "Routes not admitted: oauth",
 			},
-			expectedCondStatus: metav1.ConditionFalse,
-			expectedCondReason: hyperv1.RouteNotAdmittedReason,
+			expectedCondStatus: metav1.ConditionTrue,
+			expectedCondReason: hyperv1.AsExpectedReason,
+			expectedEndpoint: hyperv1.APIEndpoint{
+				Host: "api.example.com",
+				Port: 6443,
+			},
 		},
 	}
 
