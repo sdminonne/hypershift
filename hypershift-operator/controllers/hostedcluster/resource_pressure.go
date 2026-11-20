@@ -76,7 +76,7 @@ func reconcileManagementClusterResourcePressure(ctx context.Context, c client.Cl
 	for i := range componentsList.Items {
 		cpc := &componentsList.Items[i]
 		rollout := meta.FindStatusCondition(cpc.Status.Conditions, string(hyperv1.ControlPlaneComponentRolloutComplete))
-		if rollout == nil || rollout.Reason != hyperv1.PodSchedulingFailedReason {
+		if rollout == nil || rollout.Status != metav1.ConditionFalse || rollout.Reason != hyperv1.PodSchedulingFailedReason {
 			continue
 		}
 		affectedComponents = append(affectedComponents, cpc.Name)

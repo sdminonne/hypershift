@@ -71,8 +71,15 @@ func reconcileInstallationStage(ctx context.Context, c client.Client,
 		}
 	}
 
+	// List NodePools once for both WorkerAvailable and WaitingForOperators checks.
+	nodePools, err := listNodePools(ctx, c, hcluster.Namespace, hcluster.Name)
+	if err != nil {
+		nodePools = nil
+	}
+
 	// Ordinal 4: WorkerAvailable — any NodePool has ≥1 healthy machine.
-	if hasHealthyWorker(ctx, c, hcluster) {
+	healthyWorker := hasHealthyWorkerInNodePools(nodePools)
+	if healthyWorker {
 		hyperv1.SetInstallationStage(install, hyperv1.InstallationStageWorkerAvailable, now)
 	}
 
@@ -85,7 +92,7 @@ func reconcileInstallationStage(ctx context.Context, c client.Client,
 	if hcp != nil && hcp.Status.KubeConfig != nil {
 		kasCondition := meta.FindStatusCondition(hcp.Status.Conditions, string(hyperv1.KubeAPIServerAvailable))
 		if kasCondition != nil && kasCondition.Status == metav1.ConditionTrue {
-			if !expectsWorkers(ctx, c, hcluster) || hasHealthyWorker(ctx, c, hcluster) {
+			if !expectsWorkers(nodePools) || healthyWorker {
 				hyperv1.SetInstallationStage(install, hyperv1.InstallationStageWaitingForOperators, now)
 			}
 		}
@@ -97,11 +104,7 @@ func reconcileInstallationStage(ctx context.Context, c client.Client,
 // or autoscaling configured with min > 0. NodePools with replicas: 0,
 // autoscaling min: 0 (scale-from-zero), or no replicas/autoscaling set are
 // treated as not expecting workers.
-func expectsWorkers(ctx context.Context, c client.Client, hcluster *hyperv1.HostedCluster) bool {
-	nodePools, err := listNodePools(ctx, c, hcluster.Namespace, hcluster.Name)
-	if err != nil || len(nodePools) == 0 {
-		return false
-	}
+func expectsWorkers(nodePools []hyperv1.NodePool) bool {
 	for i := range nodePools {
 		np := &nodePools[i]
 		if np.Spec.Replicas != nil && *np.Spec.Replicas > 0 {
@@ -121,9 +124,13 @@ func expectsWorkers(ctx context.Context, c client.Client, hcluster *hyperv1.Host
 // stale condition from an older spec.
 func hasHealthyWorker(ctx context.Context, c client.Client, hcluster *hyperv1.HostedCluster) bool {
 	nodePools, err := listNodePools(ctx, c, hcluster.Namespace, hcluster.Name)
-	if err != nil || len(nodePools) == 0 {
+	if err != nil {
 		return false
 	}
+	return hasHealthyWorkerInNodePools(nodePools)
+}
+
+func hasHealthyWorkerInNodePools(nodePools []hyperv1.NodePool) bool {
 	for i := range nodePools {
 		np := &nodePools[i]
 		// Check AllMachinesReady condition with generation guard.

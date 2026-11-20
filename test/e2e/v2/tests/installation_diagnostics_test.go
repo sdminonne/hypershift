@@ -49,7 +49,7 @@ func ValidateInstallationStageCompleteTest(getTestCtx internal.TestContextGetter
 			Expect(err).NotTo(HaveOccurred())
 
 			// The installation stage is a new feature that requires at least one
-			// CPO reconcile after deployment. Eventually is justified here because
+			// HO reconcile after deployment. Eventually is justified here because
 			// we are waiting for an asynchronous condition to converge.
 			Eventually(func(g Gomega) {
 				hc := &hyperv1.HostedCluster{}
